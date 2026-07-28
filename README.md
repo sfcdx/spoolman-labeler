@@ -18,11 +18,15 @@ ohne Browser-Druckdialog.
 > ### Projektstatus
 >
 > **Dieses Projekt befindet sich in aktiver Entwicklung und hat noch kein
-> erstes Release.** Die Architektur steht, die Implementierung läuft.
-> Es gibt derzeit kein veröffentlichtes Container-Image.
+> erstes Release.** Architektur und Grundgerüst stehen — Backend, Frontend und
+> Docker-Setup sind angelegt und getestet. Die Fachlogik, also Anbindung an
+> Spoolman und Etikettendruck, folgt als Nächstes.
 >
-> Den aktuellen Stand und die geplanten Schritte findest du in
-> [`docs/`](docs/) und im [Changelog](CHANGELOG.md).
+> Es gibt derzeit **kein veröffentlichtes Container-Image**, und das Image
+> wurde bislang auch noch nie gebaut.
+>
+> Den aktuellen Stand und die nächsten Schritte findest du in
+> [`docs/status.md`](docs/status.md).
 
 ---
 
@@ -116,7 +120,9 @@ Die Details stehen in [`docs/architecture.md`](docs/architecture.md).
 
 | Dokument                                                          | Inhalt                                     |
 | ----------------------------------------------------------------- | ------------------------------------------ |
+| [`docs/status.md`](docs/status.md)                                 | Aktueller Stand und nächste Schritte       |
 | [`docs/architecture.md`](docs/architecture.md)                     | Architekturentscheidungen und Begründungen |
+| [`docs/deployment.md`](docs/deployment.md)                         | Betrieb, CUPS-Varianten, Backup, Update    |
 | [`docs/spoolman-api-analysis.md`](docs/spoolman-api-analysis.md)   | Untersuchung der Spoolman-REST-API         |
 | [`docs/ui-analysis.md`](docs/ui-analysis.md)                       | Untersuchung der Spoolman-Weboberfläche    |
 | [`docs/printing-architecture.md`](docs/printing-architecture.md)   | CUPS-Integration und Druckwege             |
