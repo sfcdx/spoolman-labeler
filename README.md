@@ -18,14 +18,24 @@ ohne Browser-Druckdialog.
 > ### Projektstatus
 >
 > **Dieses Projekt befindet sich in aktiver Entwicklung und hat noch kein
-> erstes Release.** Architektur und Grundgerüst stehen — Backend, Frontend und
-> Docker-Setup sind angelegt und getestet. Die Fachlogik, also Anbindung an
-> Spoolman und Etikettendruck, folgt als Nächstes.
+> erstes Release.** Was bereits funktioniert und durch automatisierte Tests
+> **und** einen echten Docker-Build-und-Start-Lauf verifiziert ist:
 >
-> Es gibt derzeit **kein veröffentlichtes Container-Image**, und das Image
-> wurde bislang auch noch nie gebaut.
+> - Der Compose-Stack baut und startet zuverlässig (Spoolman + Labeler +
+>   CUPS-Sidecar), alle Healthchecks werden gesund.
+> - Filamente, Hersteller und Spulen lassen sich über die Spoolman-API anlegen
+>   (`POST /api/workflows/create-only`), inklusive Idempotenz und mehrerer
+>   identischer Spulen in einem Durchgang.
+> - Etiketten werden serverseitig als PDF gerendert (physische mm-Maße,
+>   QR-Code im Spoolman-kompatiblen Format), sandboxed ohne Netzwerkzugriff.
 >
-> Den aktuellen Stand und die nächsten Schritte findest du in
+> **Was noch fehlt:** Die eigentliche CUPS-Druckanbindung (Warteschlange,
+> Übermittlung, Statusabfrage) sowie die Weboberfläche für den Hauptworkflow,
+> Einstellungen, Vorlagenverwaltung und Druckhistorie sind Platzhalter. Es
+> gibt derzeit **kein veröffentlichtes Container-Image** — der Stack wird aus
+> dem Quelltext gebaut (`docker compose up -d --build`).
+>
+> Den vollständigen, laufend aktualisierten Stand findest du in
 > [`docs/status.md`](docs/status.md).
 
 ---
@@ -137,19 +147,33 @@ Die Details stehen in [`docs/architecture.md`](docs/architecture.md).
 - Eine laufende Spoolman-Instanz — oder du startest sie aus dem mitgelieferten
   Compose-Beispiel gleich mit
 - Ein Etikettendrucker, der über CUPS ansprechbar ist (USB oder Netzwerk)
-- Unterstützte Architekturen: `linux/amd64` und `linux/arm64`
+- **Architektur:** Der Build ist für `linux/amd64` **und** `linux/arm64`
+  ausgelegt (alle Python-Abhängigkeiten bringen `cp313`-Wheels für beide
+  mit, siehe Dockerfile-Kommentar). Automatisiert verifiziert ist bislang
+  jedoch nur `amd64` — der CI-Runner baut nicht für `arm64`. Auf einem
+  Raspberry Pi o. Ä. bitte den ersten Build beobachten
+  (`docker compose build --progress=plain`) und Auffälligkeiten melden.
 
 ---
 
 ## Schnellstart
 
-> Die Compose-Konfiguration entsteht in der laufenden Implementierung.
-> Sobald sie steht, sieht der Einstieg so aus:
-
 ```bash
 git clone https://github.com/sfcdx/spoolman-labeler.git
 cd spoolman-labeler
 cp .env.example .env
+```
+
+**Vor dem Start in `.env` mindestens `CUPS_PASSWORD` setzen** — der Stack
+startet sonst absichtlich nicht:
+
+```dotenv
+CUPS_PASSWORD=<ein-sicheres-passwort>   # z. B. mit: openssl rand -base64 24
+```
+
+Dann bauen und starten:
+
+```bash
 docker compose up -d --build
 ```
 
@@ -158,10 +182,20 @@ Danach erreichbar:
 ```text
 Spoolman          http://SERVER-IP:7912
 Spoolman Labeler  http://SERVER-IP:7913
+CUPS-Weboberfläche http://127.0.0.1:631   (nur vom Docker-Host aus, siehe unten)
 ```
 
-In Spoolman Labeler unter **Einstellungen** die Spoolman-Verbindung prüfen,
-einen Drucker suchen und als Standard festlegen, eine Vorlage wählen — fertig.
+Alle drei Dienste starten mit dem Default-Profil `spoolman,cups` automatisch
+mit. Läuft Spoolman bereits an anderer Stelle oder soll CUPS auf dem Host
+statt im Container laufen, steht die Umschaltung — ausschließlich über
+`.env`, ohne die Compose-Datei anzufassen — in
+[`docs/deployment.md`](docs/deployment.md).
+
+Ob der Stack gesund ist, zeigt:
+
+```bash
+curl http://SERVER-IP:7913/api/health
+```
 
 ---
 

@@ -235,11 +235,17 @@ ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     # Vom Anwendungscode gelesene Defaults. Alles hier ist nicht-geheim.
+    #
+    # Namen ohne APP_-Praefix: Settings (backend/app/core/config.py) hat
+    # keinen env_prefix und liest Feldnamen direkt (data_dir -> DATA_DIR).
+    # APP_HOST/APP_PORT sind Ausnahmen - die werden nicht von Settings,
+    # sondern vom Entrypoint fuer den uvicorn-Aufruf gelesen (siehe
+    # docker/labeler/entrypoint.sh).
     APP_HOST=0.0.0.0 \
     APP_PORT=7913 \
-    APP_DATA_DIR=/data \
-    APP_STATIC_DIR=/app/static \
-    APP_ASSET_DIR=/app/assets \
+    DATA_DIR=/data \
+    STATIC_DIR=/app/static \
+    ASSET_DIR=/app/assets \
     DATABASE_URL=sqlite+aiosqlite:////data/spoolman-labeler.db \
     XDG_CACHE_HOME=/data/.cache
 # XDG_CACHE_HOME zeigt bewusst nach /data: /app gehoert root und ist fuer den
