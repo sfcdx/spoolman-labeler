@@ -12,8 +12,8 @@ from urllib.parse import unquote, urlparse
 import segno
 from jinja2 import StrictUndefined
 from jinja2.sandbox import SandboxedEnvironment
-from weasyprint import CSS, HTML, default_url_fetcher
-from weasyprint.urls import URLFetchingError
+from weasyprint import CSS, HTML
+from weasyprint.urls import URLFetcher, URLFetchingError
 
 from app.core.config import Settings
 from app.core.errors import AppError, ErrorCode
@@ -31,6 +31,13 @@ class LabelRenderer:
         self.settings = settings
         self.assets_dir = settings.asset_dir.resolve()
         self.environment = SandboxedEnvironment(autoescape=True, undefined=StrictUndefined)
+        # WeasyPrints ehemalige Funktion `default_url_fetcher` ist seit 69.0
+        # als deprecated markiert und kann in einer künftigen Version ohne
+        # Vorwarnung entfallen (pyproject.toml pinnt nur `>=63`). `URLFetcher`
+        # ist die von WeasyPrint selbst empfohlene Ersatzklasse — intern macht
+        # `default_url_fetcher` nichts anderes, als genau das hier zu tun.
+        # `allow_redirects=False` erhält das bisherige, engere Verhalten.
+        self._fetcher = URLFetcher(allowed_protocols=("data", "file"), allow_redirects=False)
 
     def render_pdf(
         self,
@@ -82,13 +89,13 @@ class LabelRenderer:
         except Exception as exc:
             raise AppError(ErrorCode.QR_RENDER_FAILED) from exc
 
-    def _url_fetcher(self, url: str) -> dict[str, Any]:
+    def _url_fetcher(self, url: str) -> Any:
         parsed = urlparse(url)
         if parsed.scheme == "data":
-            return cast(dict[str, Any], default_url_fetcher(url))
+            return self._fetcher.fetch(url)
         if parsed.scheme != "file":
             raise URLFetchingError("Externe Ressourcen sind in Vorlagen nicht erlaubt")
         path = Path(unquote(parsed.path)).resolve()
         if not path.is_relative_to(self.assets_dir):
             raise URLFetchingError("Ressource liegt außerhalb des Asset-Verzeichnisses")
-        return cast(dict[str, Any], default_url_fetcher(path.as_uri()))
+        return self._fetcher.fetch(path.as_uri())

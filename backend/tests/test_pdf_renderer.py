@@ -38,6 +38,27 @@ def test_renderer_blockiert_externe_ressourcen(settings: Settings) -> None:
         raise AssertionError(msg)
 
 
+def test_renderer_blockiert_pfadausbruch_aus_dem_asset_verzeichnis(
+    settings: Settings, tmp_path: object
+) -> None:
+    """`file:`-URIs sind erlaubt, aber nur innerhalb von ``asset_dir``.
+
+    Eine Vorlage darf nicht per ``../../etc/passwd`` aus dem freigegebenen
+    Verzeichnis ausbrechen. Das ist derselbe Kontrollmechanismus wie die
+    Ablehnung von `http(s)`, nur für den erlaubten Pfad.
+    """
+    renderer = LabelRenderer(settings)
+    ausserhalb = renderer.assets_dir.parent / "geheim.txt"
+
+    try:
+        renderer._url_fetcher(f"file://{ausserhalb}")
+    except URLFetchingError:
+        pass
+    else:
+        msg = "Pfadausbruch aus dem Asset-Verzeichnis wurde nicht abgewiesen"
+        raise AssertionError(msg)
+
+
 def test_qr_data_uri_enthaelt_spoolman_uri(settings: Settings) -> None:
     renderer = LabelRenderer(settings)
     with patch("app.services.rendering.pdf_renderer.segno.make", wraps=segno.make) as make:
