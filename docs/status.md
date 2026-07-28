@@ -125,3 +125,13 @@ Spoolman kompatibel halten.
 **Nicht Verifiziertes wird als solches gekennzeichnet.** Ein Commit, der
 etwas als geprüft ausgibt, das nur plausibel aussieht, kostet später mehr
 Zeit, als er spart.
+
+
+---
+
+## Nachträgliche Prüfung des Grundgerüsts (28. Juli 2026)
+
+- Das Dockerfile wurde korrigiert: Der Pfad zu `frontend/package-lock.json` war zuvor ungültig und hätte jeden Image-Build vor der Abhängigkeitsinstallation abgebrochen.
+- Der Spoolman-Healthcheck verwendet `trust_env=False`, damit interne Dienstzugriffe nicht über Prozess-Proxies umgeleitet werden.
+- Verifiziert: 32 Backend-Tests, Ruff und mypy; 37 Frontend-Tests, ESLint und Produktionsbuild.
+- Nicht verifiziert: Der reale Docker-Build/-Start bleibt offen, da die Entwicklungsumgebung keinen Docker-Daemon bereitstellt.
