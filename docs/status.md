@@ -1,7 +1,45 @@
 # Projektstatus
 
 **Letzte Aktualisierung:** 28. Juli 2026
-**Arbeitsbranch:** `fix/docker-first-build` (Draft-PR #3 nach `develop`)
+
+## Vollständiger Review vor Produktionseinsatz (28. Juli 2026)
+
+Vor dem geplanten Einsatz neben einer produktiven Spoolman-Instanz wurde der
+gesamte Code- und Doku-Stand systematisch durchgesehen (nicht nur die zuletzt
+geänderten Dateien). Ergebnis:
+
+**Behoben:**
+- Dockerfile setzte `APP_DATA_DIR`/`APP_STATIC_DIR`/`APP_ASSET_DIR`, aber
+  weder `config.py` (kein `env_prefix`) noch `entrypoint.sh` (liest explizit
+  `DATA_DIR`) werteten diese Namen aus — toter Code, unbemerkt nur weil die
+  Python-Defaults zufällig identisch waren. Korrigiert auf die tatsächlich
+  gelesenen Namen. Mit CI erneut verifiziert (Lauf 30400362473).
+- README: veralteter Entwicklungsstand-Hinweis entfernt, `CUPS_PASSWORD`
+  als Pflichtfeld im Schnellstart ergänzt, arm64-Aussage auf den echten
+  Verifikationsstand korrigiert (nur amd64 ist über CI gebaut, arm64 ist im
+  Dockerfile vorbereitet, aber nie tatsächlich gebaut worden).
+
+**Bekannt, nicht behoben (niedriges Risiko):**
+- `CreateOnlyService.run()`: schmales Race-Fenster, wenn zwei Requests mit
+  identischem `idempotency_key` echt gleichzeitig eintreffen — beide könnten
+  den Uniqueness-Check passieren, bevor einer committet. Bei
+  `APP_WORKERS=1` (Default) nur innerhalb eines einzelnen Async-Event-Loops
+  möglich, also sehr unwahrscheinlich, aber nicht ausgeschlossen. Ein
+  eindeutiger DB-Constraint auf `idempotency_key` existiert bereits; im
+  Konfliktfall käme aktuell ein 500er statt eines sauberen 409. Für den
+  produktiven Single-User-Betrieb im LAN kein praktisches Risiko.
+- `docker/cups/Dockerfile` (eigenes CUPS-Image, ADR-005-Zielzustand) wird
+  von keiner CI-Pipeline gebaut. Nur relevant, wer `docker-compose.cups.yml`
+  aktiv einbindet — nicht der Default.
+- Keine funktionale Auffälligkeit in `SpoolmanClient`, `LabelRenderer`,
+  `useHealth`, dem API-Client oder den Compose-/`.env.example`-Dateien
+  gefunden. Kein `subprocess`/`eval`/`dangerouslySetInnerHTML` im gesamten
+  Code — insbesondere für die künftige CUPS-Anbindung (Queue-Namen als
+  Nutzereingabe) eine wichtige Randbedingung, die bislang eingehalten wird.
+
+Frischer Testlauf zum Zeitpunkt des Reviews: 49 Backend-Tests, Ruff,
+mypy --strict, Alembic-Check, 37 Frontend-Tests, ESLint, Prettier,
+Frontend-Build — alle grün.
 
 ## Erledigt
 
