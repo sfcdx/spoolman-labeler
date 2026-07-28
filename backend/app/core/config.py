@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     #: Verzeichnis mit den gebauten Frontend-Dateien.
     static_dir: Path = Path("/app/static")
 
+    #: Ausschließlich dieses Verzeichnis darf der Renderer als lokale
+    #: Bild-/Schriftressource in einer Vorlage lesen.
+    asset_dir: Path = Path("/app/assets")
+
     # -- Datenbank ---------------------------------------------------------
     database_url: str = "sqlite+aiosqlite:////data/spoolman-labeler.db"
 
