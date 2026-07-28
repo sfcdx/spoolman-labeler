@@ -536,11 +536,20 @@ Druckbestätigung, Spoolman-Fork oder Sidebar-Patch in Spoolman.
 Diese Punkte sind bewusst noch nicht entschieden oder müssen an realer
 Hardware verifiziert werden:
 
-1. **Container-Build und -Start auf realem Docker-Host** — das Dockerfile legt
-   Python 3.13, `python3-cups` und das `uv`-venv inzwischen zusammen fest
-   (ADR-008). Der Docker-Daemon der Entwicklungsumgebung stand am 28. Juli
-   2026 jedoch nicht zur Verfuegung; ein echter Image-Build inklusive
-   `import cups`, Migration und Healthcheck ist daher noch zu verifizieren.
+1. ~~Container-Build und -Start auf realem Docker-Host~~ — **erledigt am
+   28. Juli 2026.** Der Docker-Daemon der Entwicklungsumgebung selbst blieb
+   ohne Registry-Zugriff (Netzwerk-Policy blockt die CDN-Hosts von Docker Hub
+   und GHCR, siehe `docs/status.md`). Verifiziert wurde deshalb über einen
+   GitHub-Actions-Workflow (`.github/workflows/docker-build.yml`), der auf
+   jeden Push läuft: `docker compose build`, vollständiger Stack-Start mit
+   `up -d --wait`, inhaltliche Healthcheck-Prüfung (`status == "ok"`),
+   Frontend-Auslieferung und Nicht-root-Ausführung. Alle Schritte grün
+   (GitHub Actions run 30398489617). Dabei zusätzlich einen echten
+   Architekturfehler gefunden und behoben: `devices: /dev/bus/usb` war fest
+   in `docker-compose.yml` verdrahtet und ließ den `cups`-Dienst auf jedem
+   Host ohne diesen Pfad hart scheitern — nicht nur auf dem CI-Runner,
+   sondern auch auf realen Zielservern ohne USB-Controller. Siehe ADR-007,
+   Nachtrag.
 2. **PPD-Name des Brother QL-800** — der Wert in den Einrichtungsbeispielen ist
    bislang eine Annahme und muss am Gerät geprüft werden.
 3. **Ob `printer-driver-all` tatsächlich `printer-driver-ptouch` mitzieht** —

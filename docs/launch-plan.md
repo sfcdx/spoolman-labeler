@@ -111,10 +111,9 @@ Dokumentation und – wo erforderlich – ein echter Containerlauf vorliegen.
 
 | Prüfstufe | Status |
 | --- | --- |
-| Backend 32 Tests, Ruff, mypy | bestanden |
+| Backend 49 Tests, Ruff, mypy --strict | bestanden |
 | Frontend 37 Tests, ESLint, Produktionsbuild | bestanden |
-| Dockerfile-Pfad für `package-lock.json` | korrigiert, aber noch ohne echten Build |
-| Docker Compose Build/Start/Healthcheck | offen – Docker-Daemon in dieser Umgebung fehlt |
-| CUPS realer Testdruck | offen – Drucker/Server nicht verfügbar |
-| Spoolman Mock-Integration | offen |
+| Docker Compose Build/Start/Healthcheck | **bestanden** – verifiziert per GitHub Actions ([run 30398489617](https://github.com/sfcdx/spoolman-labeler/actions/runs/30398489617)), da der lokale Docker-Daemon der Entwicklungsumgebung keinen Registry-Zugriff hat |
+| Spoolman Mock-Integration | teilweise – Client- und Workflow-Tests mit respx, noch keine Integrationstests gegen eine echte Spoolman-Instanz |
+| CUPS realer Testdruck | offen – Drucker/Server nicht verfügbar; CUPS-Backend selbst (Punkt C in Abschnitt 3) noch nicht implementiert |
 | End-to-End-Workflow | offen |
