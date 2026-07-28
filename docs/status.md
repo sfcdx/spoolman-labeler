@@ -15,12 +15,21 @@
 - Der Docker-Buildfehler im Frontend-Manifestpfad wurde korrigiert.
 - Die Spoolman-Gesundheitsprüfung ignoriert Prozess-Proxies bewusst, damit der
   interne Dienstname `spoolman` nicht über einen Proxy geroutet wird.
+- Getypter Spoolman-Client mit Hersteller-, Filament-, Spulen- und
+  `print_presets`-Zugriff; Eingaben und Spoolman-Fehler werden begrenzt bzw.
+  in stabile Fehlercodes übersetzt.
+- Create-only-Workflow mit Idempotenz und persistierter Fehlerspur für bereits
+  in Spoolman angelegte Spulen.
+- Kompatibler Import von Spoolman-Textpresets; er übernimmt ausdrücklich nicht
+  dessen Browser-Druckcode und entschärft Literaltext beim Import.
+- Serverseitiger PDF-Renderer: Jinja-Sandbox, physische Seitenmaße, QR-Code im
+  Spoolman-Format und ein URL-Fetcher ohne Netzfreigabe.
 
 ## Verifiziert
 
 | Prüfung | Ergebnis |
 | --- | --- |
-| Backend-Tests | 32 bestanden |
+| Backend-Tests | 47 bestanden |
 | Backend-Linting (Ruff) | bestanden |
 | Backend-Typprüfung (mypy) | bestanden |
 | Frontend-Tests | 37 bestanden |
@@ -43,7 +52,7 @@ Docker-Host bleibt vor dem Merge erforderlich.
 
 1. Image auf einem Docker-Host bauen und den Start mit dem Compose-Standardprofil
    verifizieren.
-2. Phase 3 beginnen: getypter Spoolman-Client mit Fehler-Mapping,
-   Hersteller-/Filament-Suche sowie Create-Endpunkten.
-3. Die neuen Backend-Bausteine mit Mock-Spoolman testen.
-
+2. CUPS-Übermittlung, Druckstatus-Polling und Druckjob-Historie auf dem
+   vorhandenen Modell ergänzen.
+3. Vorlagen- und Druckerprofile als API und UI anbinden; danach den
+   Create-and-print-Workflow vervollständigen.
