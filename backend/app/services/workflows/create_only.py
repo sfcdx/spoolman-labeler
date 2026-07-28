@@ -13,14 +13,17 @@ from app.core.config import Settings
 from app.core.errors import AppError, ErrorCode
 from app.models.enums import WorkflowStatus
 from app.models.workflow_run import WorkflowRun
-from app.services.spoolman import FilamentCreate, SpoolCreate, SpoolmanClient
+from app.services.spoolman import FilamentCreate, SpoolCreate, SpoolFields, SpoolmanClient
 
 
 class CreateOnlyRequest(BaseModel):
     idempotency_key: str = Field(min_length=8, max_length=128)
     filament_id: int | None = Field(default=None, gt=0)
     new_filament: FilamentCreate | None = None
-    spool: SpoolCreate
+    #: Ohne filament_id — die stammt aus request.filament_id oder dem neu
+    #: angelegten Filament, siehe run(). Ein hier mitgegebener Wert würde
+    #: ohnehin verworfen; SpoolFields lässt ihn deshalb gar nicht erst zu.
+    spool: SpoolFields
     quantity: int = Field(default=1, ge=1)
 
 
@@ -54,7 +57,7 @@ class CreateOnlyService:
                 filament_id = (await self.client.create_filament(request.new_filament)).id
             ids: list[int] = []
             for _ in range(request.quantity):
-                payload = request.spool.model_copy(update={"filament_id": filament_id})
+                payload = SpoolCreate(filament_id=filament_id, **request.spool.model_dump())
                 ids.append((await self.client.create_spool(payload)).id)
                 run.created_spool_ids_json = json.dumps(ids)
                 await self.session.flush()

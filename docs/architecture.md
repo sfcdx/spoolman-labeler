@@ -127,19 +127,31 @@ unterstützt werden kann.
 
 ---
 
-### ADR-003 — Backend: Python 3.12, FastAPI, SQLAlchemy 2, Alembic
+### ADR-003 — Backend: Python 3.13, FastAPI, SQLAlchemy 2, Alembic
 
 **Kontext.** Das Konzept gibt diesen Stack vor. Er passt zudem zu Spoolman
 selbst, das ebenfalls FastAPI verwendet.
 
-**Entscheidung.** Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.x mit
+**Entscheidung.** FastAPI, Pydantic v2, SQLAlchemy 2.x mit
 Alembic-Migrationen, `httpx` als Spoolman-Client, `uvicorn` als Server.
 Abhängigkeiten und Lockfile werden mit **uv** verwaltet.
+
+**Korrektur der Python-Version.** Das Konzept nannte Python 3.12. Im Container
+läuft stattdessen **Python 3.13**. Grund: Debian trixie liefert 3.13 als
+Standard-`python3`, und das Distributionspaket `python3-cups` ist gegen genau
+diese Version gebaut (`cups.cpython-313-*.so`, siehe ADR-008). Ein Image auf
+Basis von `python:3.12-slim-trixie` scheidet damit aus.
+
+`backend/pyproject.toml` fordert `requires-python = ">=3.12"`, bleibt also
+auch für lokale Entwicklung unter 3.12 nutzbar. Nur das Container-Image ist
+auf 3.13 festgelegt.
 
 **Konsequenzen.**
 - Reproduzierbare Builds über `uv.lock`.
 - Pydantic validiert Ein- und Ausgaben an einer Stelle.
 - Alembic macht Schemaänderungen bei Updates nachvollziehbar.
+- Die Python-Version des Images ist an die Debian-Basis gekoppelt. Ein Wechsel
+  der Basis muss gegen `python3-cups` geprüft werden.
 
 ---
 
@@ -274,10 +286,26 @@ Alle blockierenden Aufrufe laufen über `anyio.to_thread.run_sync`.
 - `pyipp` bleibt als dokumentierte Option für reines Status-Polling; als
   Übermittlungsweg ist seine Print-Job-Unterstützung zu dünn.
 
-**Offener Punkt.** Das Zusammenspiel eines Distributionspakets mit einer
-`uv`-verwalteten Umgebung ist in Phase 2 konkret zu lösen (venv mit
-`--system-site-packages` oder Installation ins System-Python). Die
-Entscheidung wird dort getroffen und hier nachgetragen.
+**Gelöst.** Das Zusammenspiel des Distributionspakets mit der
+`uv`-verwalteten Umgebung sieht so aus:
+
+```dockerfile
+uv venv --python /usr/bin/python3 --system-site-packages /opt/venv
+```
+
+Die virtuelle Umgebung wird über dem System-Python angelegt und sieht dessen
+`dist-packages` — dort liegt `python3-cups`. Alle übrigen Abhängigkeiten
+installiert `uv` aus `uv.lock` in die Umgebung selbst.
+
+Ausschlaggebend für `--system-site-packages` statt `PYTHONPATH`: Die
+`dist-packages` landen damit **hinter** den venv-eigenen `site-packages` im
+Suchpfad. Gäbe es ein Distributionspaket gleichen Namens wie eine gesperrte
+Abhängigkeit, gewänne immer die Version aus `uv.lock`. Bei `PYTHONPATH` wäre
+die Reihenfolge umgekehrt und der Lockfile ausgehebelt.
+
+Das Dockerfile prüft diese Annahme zur Bauzeit und bricht ab, wenn `import
+cups` in der Umgebung fehlschlägt. Ein stillschweigend kaputtes Image kann so
+nicht entstehen.
 
 ---
 

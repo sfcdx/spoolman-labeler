@@ -28,8 +28,15 @@ class FilamentCreate(BaseModel):
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
-class SpoolCreate(BaseModel):
-    filament_id: int = Field(gt=0)
+class SpoolFields(BaseModel):
+    """Spulenfelder ohne ``filament_id``.
+
+    Getrennt von :class:`SpoolCreate`, damit Aufrufer, die die Filament-ID
+    nicht selbst kennen — etwa der Create-only-Workflow, der sie erst aus
+    einem neu angelegten Filament erhält — keinen bedeutungslosen
+    Platzhalterwert mitgeben müssen.
+    """
+
     initial_weight: float | None = Field(default=None, ge=0)
     spool_weight: float | None = Field(default=None, ge=0)
     used_weight: float | None = Field(default=None, ge=0)
@@ -37,6 +44,10 @@ class SpoolCreate(BaseModel):
     lot_nr: str | None = Field(default=None, max_length=64)
     comment: str | None = Field(default=None, max_length=1024)
     extra: dict[str, Any] = Field(default_factory=dict)
+
+
+class SpoolCreate(SpoolFields):
+    filament_id: int = Field(gt=0)
 
 
 class SpoolmanRecord(BaseModel):
