@@ -127,33 +127,19 @@ unterstützt werden kann.
 
 ---
 
-### ADR-003 — Backend: Python 3.13, FastAPI, SQLAlchemy 2, Alembic
+### ADR-003 — Backend: Python 3.12, FastAPI, SQLAlchemy 2, Alembic
 
 **Kontext.** Das Konzept gibt diesen Stack vor. Er passt zudem zu Spoolman
 selbst, das ebenfalls FastAPI verwendet.
 
-**Entscheidung.** FastAPI, Pydantic v2, SQLAlchemy 2.x mit
+**Entscheidung.** Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.x mit
 Alembic-Migrationen, `httpx` als Spoolman-Client, `uvicorn` als Server.
 Abhängigkeiten und Lockfile werden mit **uv** verwaltet.
-
-**Korrektur der Python-Version.** Das Konzept nannte Python 3.12. Im Container
-läuft stattdessen **Python 3.13**. Grund: Debian trixie liefert 3.13 als
-Standard-`python3`, und das Distributionspaket `python3-cups` ist gegen genau
-diese Version gebaut. Die Erweiterung heißt `cups.cpython-313-*.so` und lässt
-sich aus Python 3.12 nicht laden. Ein Image auf Basis von
-`python:3.12-slim-trixie` scheidet damit aus, sobald wir `python3-cups`
-verwenden wollen — und das wollen wir aus den in ADR-008 genannten Gründen.
-
-`backend/pyproject.toml` fordert `requires-python = ">=3.12"`, bleibt also
-auch für lokale Entwicklung unter 3.12 nutzbar. Nur das Container-Image ist
-auf 3.13 festgelegt.
 
 **Konsequenzen.**
 - Reproduzierbare Builds über `uv.lock`.
 - Pydantic validiert Ein- und Ausgaben an einer Stelle.
 - Alembic macht Schemaänderungen bei Updates nachvollziehbar.
-- Die Python-Version des Images ist an die Debian-Basis gekoppelt. Ein Wechsel
-  der Basis muss gegen `python3-cups` geprüft werden.
 
 ---
 
@@ -288,26 +274,10 @@ Alle blockierenden Aufrufe laufen über `anyio.to_thread.run_sync`.
 - `pyipp` bleibt als dokumentierte Option für reines Status-Polling; als
   Übermittlungsweg ist seine Print-Job-Unterstützung zu dünn.
 
-**Gelöst in Phase 2.** Das Zusammenspiel des Distributionspakets mit der
-`uv`-verwalteten Umgebung sieht so aus:
-
-```dockerfile
-uv venv --python /usr/bin/python3 --system-site-packages /opt/venv
-```
-
-Die virtuelle Umgebung wird über dem System-Python angelegt und sieht dessen
-`dist-packages` — dort liegt `python3-cups`. Alle übrigen Abhängigkeiten
-installiert `uv` aus `uv.lock` in die Umgebung selbst.
-
-Ausschlaggebend für `--system-site-packages` statt `PYTHONPATH`: Die
-`dist-packages` landen damit **hinter** den venv-eigenen `site-packages` im
-Suchpfad. Gäbe es ein Distributionspaket gleichen Namens wie eine gesperrte
-Abhängigkeit, gewänne immer die Version aus `uv.lock`. Bei `PYTHONPATH` wäre
-die Reihenfolge umgekehrt und der Lockfile ausgehebelt.
-
-Das Dockerfile prüft diese Annahme zur Bauzeit und bricht ab, wenn `import
-cups` in der Umgebung fehlschlägt. Ein stillschweigend kaputtes Image kann so
-nicht entstehen.
+**Offener Punkt.** Das Zusammenspiel eines Distributionspakets mit einer
+`uv`-verwalteten Umgebung ist in Phase 2 konkret zu lösen (venv mit
+`--system-site-packages` oder Installation ins System-Python). Die
+Entscheidung wird dort getroffen und hier nachgetragen.
 
 ---
 
@@ -523,28 +493,20 @@ Druckbestätigung, Spoolman-Fork oder Sidebar-Patch in Spoolman.
 Diese Punkte sind bewusst noch nicht entschieden oder müssen an realer
 Hardware verifiziert werden:
 
-1. **Das Container-Image wurde noch nie gebaut.** In der Entwicklungsumgebung
-   stand kein Docker-Daemon zur Verfügung, und die Debian-Spiegel waren
-   gesperrt. Geprüft sind Syntax, Auflösung der Compose-Datei in allen
-   Profil-Kombinationen und die Existenz aller Image-Tags — **nicht** aber,
-   ob `docker build` durchläuft. Das ist vor dem ersten Release zwingend
-   nachzuholen.
-2. **Paketnamen für WeasyPrint** wurden gegen die Upstream-Dokumentation und
-   `packages.ubuntu.com` belegt, nicht gegen einen trixie-Paketindex.
-3. **PPD-Name des Brother QL-800** — der Wert in den Einrichtungsbeispielen ist
-   eine Annahme und muss am Gerät geprüft werden. `printer-driver-ptouch`
-   erzeugt PPDs dynamisch.
-4. **Ob `printer-driver-all` tatsächlich `printer-driver-ptouch` mitzieht** —
+1. **Container-Build und -Start auf realem Docker-Host** — das Dockerfile legt
+   Python 3.13, `python3-cups` und das `uv`-venv inzwischen zusammen fest
+   (ADR-008). Der Docker-Daemon der Entwicklungsumgebung stand am 28. Juli
+   2026 jedoch nicht zur Verfuegung; ein echter Image-Build inklusive
+   `import cups`, Migration und Healthcheck ist daher noch zu verifizieren.
+2. **PPD-Name des Brother QL-800** — der Wert in den Einrichtungsbeispielen ist
+   bislang eine Annahme und muss am Gerät geprüft werden.
+3. **Ob `printer-driver-all` tatsächlich `printer-driver-ptouch` mitzieht** —
    falls nein, ist das sofort das Argument für das eigene CUPS-Image.
-5. **Ob `device_cgroup_rules` unter cgroup v1 greift** — geprüft ist nur die
-   Konfiguration, nicht das Verhalten auf einem älteren Host.
-6. **Die OpenAPI-Spezifikation von Spoolman** konnte nicht abgerufen werden.
+4. **Die OpenAPI-Spezifikation von Spoolman** konnte nicht abgerufen werden.
    Die gesamte API-Analyse stammt aus dem Quellcode des `master`-Branch. Vor
    dem Release sollte sie gegen eine laufende Instanz geprüft werden.
-7. **Sortiersyntax für Extra-Felder** in der Spoolman-API ist ungetestet.
-
-Erledigt seit der ersten Fassung:
-
-- ~~Verzahnung von `python3-cups` mit der `uv`-Umgebung~~ — in ADR-008 gelöst.
-- ~~Bundle-Größe von Ant Design~~ — gemessen: 368 kB gzip in einem einzigen
-  Chunk. Code-Splitting steht aus, solange die Seiten Platzhalter sind.
+5. **Sortiersyntax für Extra-Felder** in der Spoolman-API ist ungetestet.
+6. **Bundle-Größe von Ant Design** wurde nicht gemessen.
+7. **Proxy-Isolation der Spoolman-Verbindung** ist im Healthcheck umgesetzt
+   und durch Tests abgesichert. Der getypte Spoolman-Client der naechsten Phase
+   muss dieselbe Regel (`trust_env=False`) uebernehmen.
