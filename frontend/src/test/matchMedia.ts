@@ -9,11 +9,13 @@
 
 type ChangeListener = (event: MediaQueryListEvent) => void;
 
-interface FakeMediaQueryList {
+interface Entry {
   media: string;
   matches: boolean;
   onchange: ChangeListener | null;
   listeners: Set<ChangeListener>;
+  /** Das an den Aufrufer gereichte Objekt. */
+  api: MediaQueryList;
 }
 
 export interface MatchMediaController {
@@ -25,13 +27,8 @@ export interface MatchMediaController {
   reset: () => void;
 }
 
-interface MatchMediaState {
-  prefersDark: boolean;
-  mobile: boolean;
-}
-
-const state: MatchMediaState = { prefersDark: false, mobile: false };
-const registry = new Map<string, FakeMediaQueryList>();
+const state = { prefersDark: false, mobile: false };
+const registry = new Map<string, Entry>();
 
 function evaluate(query: string): boolean {
   const normalized = query.toLowerCase();
@@ -47,6 +44,48 @@ function evaluate(query: string): boolean {
   return false;
 }
 
+function createEntry(query: string): Entry {
+  const entry: Entry = {
+    media: query,
+    matches: evaluate(query),
+    onchange: null,
+    listeners: new Set<ChangeListener>(),
+    api: undefined as unknown as MediaQueryList,
+  };
+
+  entry.api = {
+    get media() {
+      return entry.media;
+    },
+    get matches() {
+      return entry.matches;
+    },
+    get onchange() {
+      return entry.onchange;
+    },
+    set onchange(listener: ChangeListener | null) {
+      entry.onchange = listener;
+    },
+    addEventListener: (type: string, listener: ChangeListener) => {
+      if (type === "change") {
+        entry.listeners.add(listener);
+      }
+    },
+    removeEventListener: (type: string, listener: ChangeListener) => {
+      if (type === "change") {
+        entry.listeners.delete(listener);
+      }
+    },
+    // Veraltete API, die einige Bibliotheken noch benutzen.
+    addListener: (listener: ChangeListener) => entry.listeners.add(listener),
+    removeListener: (listener: ChangeListener) => entry.listeners.delete(listener),
+    dispatchEvent: () => true,
+  } as unknown as MediaQueryList;
+
+  registry.set(query, entry);
+  return entry;
+}
+
 function notifyAll(): void {
   for (const entry of registry.values()) {
     const next = evaluate(entry.media);
@@ -56,104 +95,13 @@ function notifyAll(): void {
     entry.matches = next;
     const event = { matches: next, media: entry.media } as MediaQueryListEvent;
     entry.onchange?.(event);
-    for (const listener of entry.listeners) {
+    for (const listener of [...entry.listeners]) {
       listener(event);
     }
   }
 }
 
-function createMediaQueryList(query: string): MediaQueryList {
-  const entry: FakeMediaQueryList = {
-    media: query,
-    matches: evaluate(query),
-    onchange: null,
-    listeners: new Set(),
-  };
-  registry.set(query, entry);
-
-  const api = {
-    get media() {
-      return entry.media;
-    },
-    get matches() {
-      return entry.matches;
-    },
-    get onchange() {
-      return entry.onchange;
-    },
-    set onchange(listener: ChangeListener | null) {
-      entry.onchange = listener;
-    },
-    addEventListener: (type: string, listener: ChangeListener) => {
-      if (type === "change") {
-        entry.listeners.add(listener);
-      }
-    },
-    removeEventListener: (type: string, listener: ChangeListener) => {
-      if (type === "change") {
-        entry.listeners.delete(listener);
-      }
-    },
-    // Veraltete API, die einige Bibliotheken noch nutzen.
-    addListener: (listener: ChangeListener) => entry.listeners.add(listener),
-    removeListener: (listener: ChangeListener) => entry.listeners.delete(listener),
-    dispatchEvent: () => true,
-  };
-
-  return api as unknown as MediaQueryList;
-}
-
-/** Installiert den Ersatz auf `window` und liefert die Steuerung zurueck. */
-export function installMatchMedia(): MatchMediaController {
-  window.matchMedia = ((query: string) =>
-    registry.has(query)
-      ? ({
-          ...createMediaQueryListFromExisting(query),
-        } as MediaQueryList)
-      : createMediaQueryList(query)) as typeof window.matchMedia;
-
-  return controller;
-}
-
-/**
- * Liefert fuer eine bereits registrierte Abfrage dieselbe Instanz, damit
- * Listener aus mehreren Aufrufen denselben Zustand sehen.
- */
-function createMediaQueryListFromExisting(query: string): MediaQueryList {
-  const entry = registry.get(query);
-  if (!entry) {
-    return createMediaQueryList(query);
-  }
-  return {
-    get media() {
-      return entry.media;
-    },
-    get matches() {
-      return entry.matches;
-    },
-    get onchange() {
-      return entry.onchange;
-    },
-    set onchange(listener: ChangeListener | null) {
-      entry.onchange = listener;
-    },
-    addEventListener: (type: string, listener: ChangeListener) => {
-      if (type === "change") {
-        entry.listeners.add(listener);
-      }
-    },
-    removeEventListener: (type: string, listener: ChangeListener) => {
-      if (type === "change") {
-        entry.listeners.delete(listener);
-      }
-    },
-    addListener: (listener: ChangeListener) => entry.listeners.add(listener),
-    removeListener: (listener: ChangeListener) => entry.listeners.delete(listener),
-    dispatchEvent: () => true,
-  } as unknown as MediaQueryList;
-}
-
-export const controller: MatchMediaController = {
+export const matchMediaController: MatchMediaController = {
   setPrefersDark: (dark: boolean) => {
     state.prefersDark = dark;
     notifyAll();
@@ -168,3 +116,12 @@ export const controller: MatchMediaController = {
     state.mobile = false;
   },
 };
+
+/** Installiert den Ersatz auf `window` und liefert die Steuerung zurueck. */
+export function installMatchMedia(): MatchMediaController {
+  window.matchMedia = ((query: string) => {
+    const existing = registry.get(query);
+    return existing ? existing.api : createEntry(query).api;
+  }) as typeof window.matchMedia;
+  return matchMediaController;
+}
