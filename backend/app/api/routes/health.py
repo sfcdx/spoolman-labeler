@@ -25,7 +25,12 @@ async def _probe_spoolman(settings: Settings) -> tuple[ComponentStatus, str | No
     """
     url = f"{settings.spoolman_api_base}/info"
     try:
-        async with httpx.AsyncClient(timeout=settings.spoolman_timeout_seconds) as client:
+        # Der Spoolman-Dienst ist eine lokale, vom Betreiber konfigurierte
+        # Abhaengigkeit. HTTP(S)_PROXY aus dem Container- oder Host-Environment
+        # darf diesen Verkehr weder umleiten noch den Clientaufbau beeinflussen.
+        async with httpx.AsyncClient(
+            timeout=settings.spoolman_timeout_seconds, trust_env=False
+        ) as client:
             response = await client.get(url)
     except httpx.TimeoutException:
         return ComponentStatus.ERROR, "Zeitüberschreitung bei der Verbindung zu Spoolman"
