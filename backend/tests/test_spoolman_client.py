@@ -1,0 +1,77 @@
+from __future__ import annotations
+
+import json
+
+import httpx
+import pytest
+import respx
+
+from app.core.config import Settings
+from app.core.errors import AppError, ErrorCode
+from app.services.spoolman import FilamentCreate, SpoolCreate, SpoolmanClient, VendorCreate
+
+
+@respx.mock
+async def test_create_kodiert_extra_und_farben() -> None:
+    route = respx.post("http://spoolman:8000/api/v1/filament").mock(
+        return_value=httpx.Response(200, json={"id": 9})
+    )
+    result = await SpoolmanClient(Settings()).create_filament(
+        FilamentCreate(density=1.2, diameter=1.75, color_hex="#112233", extra={"name": "ABS"})
+    )
+    assert result.id == 9
+    assert json.loads(route.calls[0].request.content) == {
+        "density": 1.2,
+        "diameter": 1.75,
+        "color_hex": "112233",
+        "extra": {"name": '"ABS"'},
+    }
+
+
+@respx.mock
+async def test_create_spool_und_vendor() -> None:
+    respx.post("http://spoolman:8000/api/v1/vendor").mock(
+        return_value=httpx.Response(200, json={"id": 1})
+    )
+    respx.post("http://spoolman:8000/api/v1/spool").mock(
+        return_value=httpx.Response(200, json={"id": 2})
+    )
+    client = SpoolmanClient(Settings())
+    assert (await client.create_vendor(VendorCreate(name="Test"))).id == 1
+    assert (await client.create_spool(SpoolCreate(filament_id=1))).id == 2
+
+
+@respx.mock
+async def test_spoolman_fehler_wird_gemappt() -> None:
+    respx.post("http://spoolman:8000/api/v1/spool").mock(
+        return_value=httpx.Response(400, json={"message": "ungültig"})
+    )
+    with pytest.raises(AppError) as raised:
+        await SpoolmanClient(Settings()).create_spool(SpoolCreate(filament_id=1))
+    assert raised.value.code is ErrorCode.SPOOLMAN_VALIDATION_FAILED
+
+
+@respx.mock
+async def test_print_presets_entpackt_den_json_setting_wert() -> None:
+    respx.get("http://spoolman:8000/api/v1/setting/print_presets").mock(
+        return_value=httpx.Response(
+            200,
+            json={"value": '[{"id":"preset-1","template":"{id}","labelSettings":{}}]'},
+        )
+    )
+
+    presets = await SpoolmanClient(Settings()).print_presets()
+
+    assert presets == [{"id": "preset-1", "template": "{id}", "labelSettings": {}}]
+
+
+@respx.mock
+async def test_print_presets_lehnt_ungueltiges_format_ab() -> None:
+    respx.get("http://spoolman:8000/api/v1/setting/print_presets").mock(
+        return_value=httpx.Response(200, json={"value": "keine-json-liste"})
+    )
+
+    with pytest.raises(AppError) as raised:
+        await SpoolmanClient(Settings()).print_presets()
+
+    assert raised.value.code is ErrorCode.SPOOLMAN_VALIDATION_FAILED
