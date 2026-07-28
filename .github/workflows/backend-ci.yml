@@ -1,0 +1,74 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  test:
+    name: Lint, Typecheck, Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: uv installieren
+        # Bewusst über das offizielle Installationsskript statt über die
+        # Marketplace-Action astral-sh/setup-uv: deren aktuelle Tag-Version
+        # ließ sich zum Zeitpunkt des Schreibens nicht verifizieren (die
+        # GitHub-API ist für diese Session auf dieses Repository beschränkt).
+        # Das Skript ist Astrals eigener, dokumentierter Installationsweg.
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: uv-Cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('backend/uv.lock') }}
+          restore-keys: uv-${{ runner.os }}-
+
+      - name: Python 3.12 bereitstellen
+        run: uv python install 3.12
+
+      - name: Abhängigkeiten installieren
+        run: uv sync --all-extras --frozen
+
+      - name: Ruff (Lint)
+        run: uv run ruff check .
+
+      - name: Ruff (Format-Prüfung)
+        run: uv run ruff format --check .
+
+      - name: mypy --strict
+        run: uv run mypy app
+
+      - name: pytest
+        run: uv run pytest --cov=app --cov-report=term-missing
+
+      - name: Alembic-Migration gegen frische SQLite-Datenbank
+        run: |
+          set -euo pipefail
+          export DATABASE_URL="sqlite+aiosqlite:////tmp/ci-migration-check.db"
+          uv run alembic upgrade head
+          uv run alembic check
+          uv run alembic downgrade base

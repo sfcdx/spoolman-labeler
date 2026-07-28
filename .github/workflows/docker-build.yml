@@ -1,0 +1,102 @@
+name: Docker Build und Boot-Test
+
+# Das eigentliche Verifikationsgate vor jedem Merge nach main: baut das
+# Image wirklich, startet den vollstaendigen Compose-Stack (inklusive
+# CUPS-Sidecar) und prueft den Healthcheck gegen echte, laufende Dienste.
+#
+# Dieser Test kann in der Entwicklungsumgebung, in der dieses Projekt
+# entstanden ist, nicht ausgefuehrt werden: Dort ist kein Docker-Daemon
+# verfuegbar, und selbst mit einem manuell gestarteten Daemon blockiert die
+# Netzwerk-Policy der Sandbox den Layer-Download von den CDN-Hosts, an die
+# Docker Hub und GHCR umleiten (siehe docs/status.md). Der GitHub-Actions-
+# Runner hat regulaeren Internetzugang und fuehrt den Build deshalb hier
+# zum ersten Mal wirklich aus.
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-boot:
+    name: Build und Boot-Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Buildx einrichten
+        uses: docker/setup-buildx-action@v4.2.0
+
+      - name: .env aus der Vorlage anlegen
+        run: cp .env.example .env
+
+      - name: Compose-Konfiguration validieren (alle Profile)
+        run: |
+          set -euo pipefail
+          echo "--- ohne Profile ---"
+          docker compose config >/dev/null
+          echo "--- Profil spoolman ---"
+          docker compose --profile spoolman config >/dev/null
+          echo "--- Profile spoolman + cups (Default) ---"
+          docker compose --profile spoolman --profile cups config >/dev/null
+          echo "Alle Kombinationen validiert."
+
+      - name: Anwendungs-Image bauen
+        run: docker compose build spoolman-labeler
+
+      - name: Stack starten und auf gesunden Status warten
+        # --wait ist eingebauter Compose-v2-Mechanismus: wartet, bis alle
+        # Dienste mit Healthcheck "healthy" sind, und schlägt mit klarer
+        # Fehlermeldung fehl, falls einer davon "unhealthy" wird oder die
+        # Zeit abläuft. Kein selbstgebautes Polling nötig.
+        run: docker compose --profile spoolman --profile cups up -d --wait --wait-timeout 150
+
+      - name: Healthcheck-Endpunkt der Anwendung prüfen
+        run: |
+          set -euo pipefail
+          port="$(grep -E '^APP_PORT=' .env | cut -d= -f2)"
+          port="${port:-7913}"
+          response="$(curl -sS --fail --max-time 10 "http://localhost:${port}/api/health")"
+          echo "Antwort: $response"
+          status="$(echo "$response" | jq -r '.status')"
+          if [ "$status" != "ok" ]; then
+            echo "::error::Healthcheck meldet Status '$status', erwartet 'ok'."
+            exit 1
+          fi
+          echo "Healthcheck erfolgreich: Kernanwendung ist gesund."
+
+      - name: Frontend wird ausgeliefert
+        run: |
+          set -euo pipefail
+          port="$(grep -E '^APP_PORT=' .env | cut -d= -f2)"
+          port="${port:-7913}"
+          curl -sS --fail --max-time 10 "http://localhost:${port}/" -o /tmp/index.html
+          grep -qi '<div id="root"' /tmp/index.html
+
+      - name: Container laufen als Nicht-Root
+        run: |
+          set -euo pipefail
+          uid="$(docker compose exec -T spoolman-labeler id -u)"
+          echo "UID im Labeler-Container: $uid"
+          if [ "$uid" = "0" ]; then
+            echo "::error::Der Anwendungscontainer läuft als root."
+            exit 1
+          fi
+
+      - name: Logs bei Fehlschlag ausgeben
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Stack stoppen
+        if: always()
+        run: docker compose --profile spoolman --profile cups down -v
