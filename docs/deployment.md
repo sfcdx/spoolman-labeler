@@ -239,6 +239,24 @@ als jedes gepflegte Fremd-Image.
 
 ## 3. USB-Drucker einrichten
 
+USB-Passthrough ist im Standard-Stack **nicht** aktiv — `/dev/bus/usb`
+existiert nicht auf jedem Host (u. a. auf vielen CI-Runnern und manchen
+minimalen Cloud-VMs), und ein fest verdrahteter `devices:`-Eintrag auf einen
+fehlenden Pfad ließe `docker compose up` für den gesamten `cups`-Dienst
+scheitern — auch für Betreiber, die nur einen Netzwerkdrucker anschließen
+und gar kein USB brauchen. Vor Schritt 3.1 deshalb einmalig aktivieren:
+
+```dotenv
+# .env
+COMPOSE_FILE=docker-compose.yml:docker-compose.usb.yml
+```
+
+Mit eigenem CUPS-Image (Abschnitt 8) kombinierbar:
+
+```dotenv
+COMPOSE_FILE=docker-compose.yml:docker-compose.cups.yml:docker-compose.usb.yml
+```
+
 ### 3.1 Einmalige Einrichtung
 
 ```bash

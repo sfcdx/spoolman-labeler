@@ -264,6 +264,21 @@ Hosts und ist ein erheblicher Eingriff in das Wirtssystem.
   über ihre Adresse eingerichtet statt per Autodiscovery — ein akzeptabler
   Tausch, der dokumentiert wird.
 
+**Nachtrag.** `devices:` auf einen fehlenden Host-Pfad lässt `docker compose
+up` für den **gesamten** `cups`-Dienst hart scheitern — nicht nur den
+USB-Zugriff. Das traf beim ersten echten CI-Lauf zu: GitHub-Actions-Runner
+exponieren keinen USB-Root-Hub, `/dev/bus/usb` existiert dort schlicht nicht.
+Dieselbe Lücke gilt für jeden Zieleinsatz ohne sichtbaren USB-Controller —
+auch für Betreiber, die nur einen Netzwerkdrucker anschließen und gar kein
+USB brauchen.
+
+`devices` und `device_cgroup_rules` liegen deshalb **nicht** mehr im
+Standard-`docker-compose.yml`, sondern in einem eigenen, optionalen Override
+`docker-compose.usb.yml` — aktiviert wie die anderen Varianten allein über
+`COMPOSE_FILE` in `.env`, ohne eine Compose-Datei zu bearbeiten (siehe
+`docs/deployment.md`, Abschnitt 3). Der Standard-Stack startet damit auf
+jedem Host, USB-Passthrough ist opt-in.
+
 ---
 
 ### ADR-008 — CUPS-Anbindung über `pycups` aus dem Distributionspaket

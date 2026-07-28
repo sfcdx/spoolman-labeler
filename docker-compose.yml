@@ -196,17 +196,14 @@ services:
       # Dateisystem, und Docker befuellt es beim ersten Anlegen aus dem Image.
       - cups-config:/etc/cups
 
-    devices:
-      - /dev/bus/usb:/dev/bus/usb
-
-    device_cgroup_rules:
-      # usbfs, Character-Device Major 189, alle Minor-Nummern.
-      # DIESE Zeile ist der Teil, der das Aus- und Wiedereinstecken des
-      # Druckers ueberlebt: `devices:` allein legt die Erlaubnisliste beim
-      # Container-Start fest, ein danach neu vergebener Minor waere vom
-      # Kernel mit EPERM blockiert. Kein `privileged: true` (ADR-007).
-      - 'c 189:* rmw'
-
+    # Kein USB-Passthrough hier im Default: `/dev/bus/usb` existiert nicht auf
+    # jedem Host — insbesondere nicht auf vielen CI-Runnern und manchen
+    # minimalen Cloud-VMs ohne exponierten USB-Root-Hub. Ein `devices:`-Eintrag
+    # auf einen fehlenden Pfad laesst `docker compose up` fuer den gesamten
+    # Dienst hart scheitern (nicht nur beim USB-Zugriff selbst) — das wuerde
+    # also auch reine Netzwerkdrucker-Betreiber treffen, die gar kein USB
+    # brauchen. USB-Passthrough ist deshalb ein Opt-in-Override, siehe
+    # docker-compose.usb.yml und docs/deployment.md.
     healthcheck:
       # LC_ALL=C, damit die Ausgabe nicht lokalisiert wird.
       test: ["CMD-SHELL", "LC_ALL=C lpstat -r >/dev/null 2>&1"]

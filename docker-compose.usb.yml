@@ -1,0 +1,39 @@
+# Override: USB-Etikettendrucker am CUPS-Sidecar durchreichen
+# ==============================================================
+#
+# Der Default-Stack (docker-compose.yml) reicht kein USB-Gerät durch, weil
+# `/dev/bus/usb` nicht auf jedem Host existiert — dann würde `docker compose
+# up` für den gesamten cups-Dienst hart scheitern, nicht nur der USB-Zugriff.
+# Das träfe auch reine Netzwerkdrucker-Betreiber, die gar kein USB brauchen.
+#
+# Wer einen USB-Etikettendrucker am selben Host betreibt, der den
+# CUPS-Sidecar (Variante B) ausführt, aktiviert diese Datei zusätzlich zur
+# Standard-Compose-Datei — wie gewohnt ohne eine Compose-Datei zu bearbeiten:
+#
+#     # .env
+#     COMPOSE_FILE=docker-compose.yml:docker-compose.usb.yml
+#
+# Kombinierbar mit docker-compose.cups.yml (eigenes CUPS-Image):
+#
+#     COMPOSE_FILE=docker-compose.yml:docker-compose.cups.yml:docker-compose.usb.yml
+#
+# Voraussetzung: Auf dem Docker-Host muss `/dev/bus/usb` tatsächlich
+# existieren (normal auf jedem regulären Linux-Server oder -Desktop mit
+# geladenem usbcore-Treiber, unabhängig davon, ob gerade ein Gerät
+# angeschlossen ist). Fehlt der Pfad trotzdem, meldet `docker compose up`
+# das sofort und eindeutig als "no such file or directory" für dieses
+# Override — dann ist entweder kein USB-Controller sichtbar (virtualisierte
+# Umgebung) oder es liegt ein anderer Fehler vor.
+
+services:
+  cups:
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+
+    device_cgroup_rules:
+      # usbfs, Character-Device Major 189, alle Minor-Nummern.
+      # DIESE Zeile ist der Teil, der das Aus- und Wiedereinstecken des
+      # Druckers überlebt: `devices:` allein legt die Erlaubnisliste beim
+      # Container-Start fest, ein danach neu vergebener Minor wäre vom
+      # Kernel mit EPERM blockiert. Kein `privileged: true` (ADR-007).
+      - 'c 189:* rmw'
