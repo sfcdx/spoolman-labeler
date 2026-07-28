@@ -132,7 +132,9 @@ Versionierung nach [Semantic Versioning](https://semver.org/lang/de/):
 
 ## Entwicklungsumgebung
 
-Siehe [`docs/development.md`](docs/development.md) für das vollständige Setup.
+> Das Backend- und Frontend-Grundgerüst entsteht gerade. Sobald es steht,
+> beschreibt `docs/development.md` das vollständige Setup und wird hier
+> verlinkt.
 
 Vor jedem Pull Request lokal ausführen:
 
