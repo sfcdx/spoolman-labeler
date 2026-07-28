@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getHealth, toApiError, type ApiError, type Health } from "../api";
 
 export interface UseHealthResult {
@@ -13,23 +13,18 @@ export const HEALTH_POLL_INTERVAL_MS = 30_000;
 
 /**
  * Fragt `GET /api/health` ab und wiederholt das in festem Intervall.
- * Ein Fehler ersetzt die letzte Antwort nicht — die Anzeige bleibt stabil.
+ *
+ * Eine fehlgeschlagene Abfrage loescht die zuletzt bekannte Antwort nicht —
+ * die Anzeige bleibt stabil und meldet zusaetzlich den Fehler.
  */
 export function useHealth(intervalMs: number = HEALTH_POLL_INTERVAL_MS): UseHealthResult {
   const [health, setHealth] = useState<Health | undefined>(undefined);
   const [error, setError] = useState<ApiError | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
-  const mountedRef = useRef(true);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
 
   const refresh = useCallback(() => {
+    setLoading(true);
     setTick((value) => value + 1);
   }, []);
 
@@ -37,17 +32,19 @@ export function useHealth(intervalMs: number = HEALTH_POLL_INTERVAL_MS): UseHeal
     const controller = new AbortController();
     let cancelled = false;
 
-    setLoading(true);
-    getHealth(controller.signal)
-      .then((result) => {
-        if (cancelled || !mountedRef.current) {
+    // Alle Zustandsaenderungen bewusst in genau einem Zweig, damit React sie
+    // zu einem einzigen Rendering zusammenfasst.
+    void (async () => {
+      try {
+        const result = await getHealth(controller.signal);
+        if (cancelled) {
           return;
         }
         setHealth(result);
         setError(undefined);
-      })
-      .catch((cause: unknown) => {
-        if (cancelled || !mountedRef.current) {
+        setLoading(false);
+      } catch (cause) {
+        if (cancelled) {
           return;
         }
         const apiError = toApiError(cause);
@@ -55,13 +52,9 @@ export function useHealth(intervalMs: number = HEALTH_POLL_INTERVAL_MS): UseHeal
           return;
         }
         setError(apiError);
-      })
-      .finally(() => {
-        if (cancelled || !mountedRef.current) {
-          return;
-        }
         setLoading(false);
-      });
+      }
+    })();
 
     return () => {
       cancelled = true;

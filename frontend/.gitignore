@@ -1,0 +1,4 @@
+# Ergaenzt die Regeln im Wurzelverzeichnis.
+coverage/
+.eslintcache
+*.tsbuildinfo

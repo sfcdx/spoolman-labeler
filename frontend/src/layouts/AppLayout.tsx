@@ -181,10 +181,9 @@ export function AppLayout(): React.JSX.Element {
           <ThemeSwitcher />
         </Header>
 
-        <Content style={{ padding: isMobile ? 12 : 24 }}>
-          <main
-            id={MAIN_CONTENT_ID}
-            tabIndex={-1}
+        {/* `Layout.Content` rendert bereits ein <main>-Element. */}
+        <Content id={MAIN_CONTENT_ID} tabIndex={-1} style={{ padding: isMobile ? 12 : 24 }}>
+          <div
             style={{
               maxWidth: 900,
               margin: "0 auto",
@@ -196,7 +195,7 @@ export function AppLayout(): React.JSX.Element {
             }}
           >
             <Outlet />
-          </main>
+          </div>
         </Content>
 
         <Footer style={{ padding: "12px 16px" }}>

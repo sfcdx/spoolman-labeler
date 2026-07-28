@@ -52,8 +52,7 @@ export const texts = {
   pages: {
     newSpool: {
       title: "Neue Spule",
-      subtitle:
-        "Filamentspule in Spoolman anlegen und im selben Vorgang ein Etikett drucken.",
+      subtitle: "Filamentspule in Spoolman anlegen und im selben Vorgang ein Etikett drucken.",
       steps: {
         filament: "Filament wählen",
         spool: "Spulendaten erfassen",

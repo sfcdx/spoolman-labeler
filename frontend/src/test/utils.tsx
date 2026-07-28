@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { render, type RenderResult } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { vi } from "vitest";
 import { ColorModeProvider } from "../theme/ColorModeProvider";
@@ -20,6 +21,17 @@ export function renderWithProviders(
       <MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>
     </ColorModeProvider>,
   );
+}
+
+/**
+ * `userEvent` ohne Pruefung von `pointer-events`.
+ *
+ * Ant Design blendet die Radio-Eingabefelder des `Segmented` per CSS aus
+ * (`pointer-events: none`). In jsdom wuerde user-event deshalb einen echten
+ * Klick verweigern, obwohl er im Browser funktioniert.
+ */
+export function setupUser(): ReturnType<typeof userEvent.setup> {
+  return userEvent.setup({ pointerEventsCheck: 0 });
 }
 
 /** Antwort-Attrappe fuer `fetch`. */

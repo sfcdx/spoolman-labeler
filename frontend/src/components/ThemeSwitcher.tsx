@@ -18,6 +18,7 @@ export function ThemeSwitcher(): React.JSX.Element {
   return (
     <Segmented
       value={preference}
+      role="radiogroup"
       aria-label={texts.theme.label}
       onChange={(value) => {
         if (isColorModePreference(value)) {

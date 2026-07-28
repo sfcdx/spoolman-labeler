@@ -30,10 +30,7 @@ export type KnownApiErrorCode =
 
 /** Zusaetzliche Codes, die ausschliesslich im Client entstehen. */
 export type ClientErrorCode =
-  | "NETWORK_ERROR"
-  | "INVALID_RESPONSE"
-  | "REQUEST_ABORTED"
-  | "HTTP_ERROR";
+  "NETWORK_ERROR" | "INVALID_RESPONSE" | "REQUEST_ABORTED" | "HTTP_ERROR";
 
 /** Beliebiger String, ohne die Autovervollstaendigung der Union zu verlieren. */
 type OpenString = string & Record<never, never>;
@@ -103,7 +100,9 @@ function formatValidationDetail(detail: unknown): string | undefined {
       continue;
     }
     const loc = Array.isArray(record["loc"])
-      ? record["loc"].filter((part) => typeof part === "string" || typeof part === "number").join(".")
+      ? record["loc"]
+          .filter((part) => typeof part === "string" || typeof part === "number")
+          .join(".")
       : undefined;
     parts.push(loc ? `${loc}: ${msg}` : msg);
   }

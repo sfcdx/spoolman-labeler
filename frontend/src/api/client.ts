@@ -73,9 +73,13 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     requestHeaders["Content-Type"] = "application/json";
   }
 
+  // Bewusst vor dem try: ein falsch gebauter Pfad ist ein Programmierfehler
+  // und darf nicht als Netzwerkfehler getarnt werden.
+  const url = buildUrl(path, query);
+
   let response: Response;
   try {
-    response = await fetch(buildUrl(path, query), {
+    response = await fetch(url, {
       method,
       headers: requestHeaders,
       body: body === undefined ? undefined : JSON.stringify(body),

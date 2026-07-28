@@ -6,13 +6,13 @@ import {
   COLOR_PRIMARY,
   PREFERS_DARK_QUERY,
   readStoredPreference,
-  readSystemMode,
   resolveColorMode,
   writeStoredPreference,
   type ColorModePreference,
   type ResolvedColorMode,
 } from "./colorMode";
 import { ThemeCssVariables } from "./ThemeCssVariables";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 
 export interface ColorModeProviderProps {
   children: ReactNode;
@@ -22,7 +22,7 @@ export interface ColorModeProviderProps {
 
 /**
  * Stellt Farbschema-Kontext und den einzigen `ConfigProvider` der Anwendung
- * bereit (ADR-004: genau ein Token-Override).
+ * bereit (ADR-004: genau ein Token-Override, `colorPrimary`).
  */
 export function ColorModeProvider({
   children,
@@ -31,24 +31,11 @@ export function ColorModeProvider({
   const [preference, setPreferenceState] = useState<ColorModePreference>(
     () => initialPreference ?? readStoredPreference(),
   );
-  const [systemMode, setSystemMode] = useState<ResolvedColorMode>(() => readSystemMode());
 
-  // Der Systemmodus muss live folgen, nicht nur beim Laden.
-  useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-      return;
-    }
-    const query = window.matchMedia(PREFERS_DARK_QUERY);
-    setSystemMode(query.matches ? "dark" : "light");
-
-    const handleChange = (event: MediaQueryListEvent): void => {
-      setSystemMode(event.matches ? "dark" : "light");
-    };
-    query.addEventListener("change", handleChange);
-    return () => {
-      query.removeEventListener("change", handleChange);
-    };
-  }, []);
+  // Der Systemwunsch wird live beobachtet, nicht nur einmal beim Laden
+  // gelesen — ein Wechsel des Betriebssystem-Themes schlaegt sofort durch.
+  const prefersDark = useMediaQuery(PREFERS_DARK_QUERY);
+  const systemMode: ResolvedColorMode = prefersDark ? "dark" : "light";
 
   const mode = resolveColorMode(preference, systemMode);
 

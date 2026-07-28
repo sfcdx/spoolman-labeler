@@ -15,14 +15,17 @@ const DEV_API_TARGET = "http://127.0.0.1:7913";
 export default defineConfig({
   plugins: [react()],
 
-  // Relative Asset-Pfade, damit die App auch unter einem Base-Path
-  // ausgeliefert werden kann (siehe docs/ui-analysis.md, Abschnitt 5.3).
-  base: "",
+  // Absolute Asset-Pfade: Die Anwendung wird unter "/" ausgeliefert, und
+  // Deep Links wie /templates/edit/1 duerfen die Asset-Aufloesung nicht
+  // verschieben (das waere bei relativen Pfaden der Fall).
+  base: "/",
 
   build: {
     outDir: "dist",
     emptyOutDir: true,
-    sourcemap: true,
+    // Keine Sourcemaps im Produktions-Bundle — sie waeren groesser als die
+    // Anwendung selbst und landen sonst im Docker-Image.
+    sourcemap: false,
   },
 
   server: {

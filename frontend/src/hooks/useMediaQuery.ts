@@ -1,36 +1,41 @@
-import { useEffect, useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
+
+function supportsMatchMedia(): boolean {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function";
+}
 
 /**
  * Beobachtet eine Media Query live.
  *
- * Bewusst statt `Grid.useBreakpoint()`, damit die Layout-Umschaltung an einer
- * einzigen, explizit benannten Bedingung haengt und in Tests steuerbar ist.
+ * Bewusst `useSyncExternalStore` statt `useState` + `useEffect`: Die Query ist
+ * eine externe Datenquelle, der Wert ist damit schon beim ersten Rendern
+ * korrekt und es entstehen keine Folgerenderings.
+ *
+ * Ebenfalls bewusst statt `Grid.useBreakpoint()`, damit die Layout-Umschaltung
+ * an einer einzigen, explizit benannten Bedingung haengt.
  */
 export function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState<boolean>(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-      return false;
-    }
-    return window.matchMedia(query).matches;
-  });
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => {
+      if (!supportsMatchMedia()) {
+        return () => {};
+      }
+      const mediaQueryList = window.matchMedia(query);
+      mediaQueryList.addEventListener("change", onStoreChange);
+      return () => {
+        mediaQueryList.removeEventListener("change", onStoreChange);
+      };
+    },
+    [query],
+  );
 
-  useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-      return;
-    }
-    const mediaQueryList = window.matchMedia(query);
-    setMatches(mediaQueryList.matches);
+  const getSnapshot = useCallback(
+    () => (supportsMatchMedia() ? window.matchMedia(query).matches : false),
+    [query],
+  );
 
-    const handleChange = (event: MediaQueryListEvent): void => {
-      setMatches(event.matches);
-    };
-    mediaQueryList.addEventListener("change", handleChange);
-    return () => {
-      mediaQueryList.removeEventListener("change", handleChange);
-    };
-  }, [query]);
-
-  return matches;
+  // Ohne DOM (Server, Tests ohne Fenster) gilt die Query als nicht erfuellt.
+  return useSyncExternalStore(subscribe, getSnapshot, () => false);
 }
 
 /** Breakpoint, ab dem die Seitenleiste in einen Drawer wandert. */
