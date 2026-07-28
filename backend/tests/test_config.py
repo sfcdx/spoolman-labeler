@@ -102,3 +102,31 @@ def test_verzeichnisse_werden_angelegt(tmp_path: Path) -> None:
     assert settings.rendered_dir.is_dir()
     assert settings.templates_dir.is_dir()
     assert settings.logs_dir.is_dir()
+
+
+def test_compose_variablen_werden_von_settings_uebernommen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Der Compose-Vertrag darf keine wirksamen Werte still verwerfen."""
+    monkeypatch.setenv("LOG_LEVEL", "WARNING")
+    monkeypatch.setenv("SPOOLMAN_API_URL", "http://spoolman:8000")
+    monkeypatch.setenv("SPOOLMAN_PUBLIC_URL", "http://localhost:7912")
+    monkeypatch.setenv("CUPS_SERVER", "cups")
+    monkeypatch.setenv("CUPS_PORT", "631")
+    monkeypatch.setenv("CUPS_USERNAME", "admin")
+    monkeypatch.setenv("CUPS_USE_TLS", "false")
+    monkeypatch.setenv("DEFAULT_DPI", "300")
+    monkeypatch.setenv("MAX_PRINT_RETRIES", "2")
+    monkeypatch.setenv("MAX_TEMPLATE_UPLOAD_BYTES", "1048576")
+
+    settings = Settings()
+
+    assert settings.log_level == "WARNING"
+    assert settings.spoolman_api_url == "http://spoolman:8000"
+    assert settings.spoolman_public_url == "http://localhost:7912"
+    assert settings.cups_server == "cups"
+    assert settings.cups_port == 631
+    assert settings.cups_username == "admin"
+    assert settings.default_dpi == 300
+    assert settings.max_print_retries == 2
+    assert settings.max_template_upload_bytes == 1_048_576
