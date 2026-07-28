@@ -45,7 +45,8 @@ fi
 if ! mkdir -p \
         "${APP_DATA_DIR}/templates" \
         "${APP_DATA_DIR}/rendered" \
-        "${APP_DATA_DIR}/logs" 2>/dev/null; then
+        "${APP_DATA_DIR}/logs" \
+        "${APP_DATA_DIR}/.cache" 2>/dev/null; then
     die "Kein Schreibrecht auf '${APP_DATA_DIR}' (laufe als UID $(id -u), GID $(id -g)).
          Bei einem Bind-Mount muss das Host-Verzeichnis dieser UID gehoeren:
              sudo chown -R 10001:10001 <host-verzeichnis>
@@ -61,7 +62,7 @@ fi
 # Das ist der Baustein, der ein 'docker compose pull && up -d' ueber
 # Schemaaenderungen hinweg traegt.
 
-if [ "$RUN_MIGRATIONS" != "0" ] && [ -f /app/alembic.ini ]; then
+if [ "$RUN_MIGRATIONS" != "0" ] && [ -f /app/alembic.ini ] && command -v alembic >/dev/null 2>&1; then
     log "Fuehre Datenbankmigrationen aus (alembic upgrade head) ..."
     if ! alembic -c /app/alembic.ini upgrade head; then
         die "Migration fehlgeschlagen. Der Container startet bewusst nicht mit

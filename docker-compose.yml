@@ -1,0 +1,227 @@
+# Spoolman Labeler — Compose-Stack
+# ================================
+#
+# Diese Datei muss fuer keine der unterstuetzten Betriebsarten bearbeitet
+# werden. Alles laeuft ueber .env — Kopiervorlage: .env.example.
+#
+#   Variante B (Default)  CUPS-Sidecar in diesem Stack
+#   Variante A            CUPS laeuft auf dem Docker-Host
+#   Variante C            CUPS-Server irgendwo im LAN
+#
+# Umgeschaltet wird ueber COMPOSE_PROFILES und CUPS_SERVER in .env; die
+# Zuordnung steht dort und in docs/deployment.md.
+#
+# Alle Image-Tags sind gepinnt. Kein ':latest' — ein Update soll ein
+# bewusster, von uns getesteter Schritt sein und nicht beim naechsten
+# `docker compose pull` einfach passieren.
+
+name: spoolman-labeler
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Spoolman — das fuehrende Inventarsystem
+  # ---------------------------------------------------------------------------
+  # Liegt im Profil "spoolman". Wer Spoolman bereits betreibt, nimmt das Profil
+  # aus COMPOSE_PROFILES heraus und zeigt mit SPOOLMAN_URL auf die vorhandene
+  # Instanz.
+  spoolman:
+    profiles: ["spoolman"]
+    image: ghcr.io/donkie/spoolman:${SPOOLMAN_VERSION:-0.25.0}
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Europe/Berlin}
+      # Spoolman laesst sich den Port vorgeben; wir bleiben beim Image-Default
+      # 8000 im Container und mappen aussen auf 7912. Damit stimmt die
+      # interne URL http://spoolman:8000 dauerhaft, unabhaengig davon, welchen
+      # Host-Port der Betreiber waehlt.
+      SPOOLMAN_DIR_DATA: /home/app/.local/share/spoolman
+      SPOOLMAN_DIR_BACKUPS: /home/app/.local/share/spoolman/backups
+    volumes:
+      - spoolman-data:/home/app/.local/share/spoolman
+    ports:
+      - "${SPOOLMAN_BIND_ADDRESS:-0.0.0.0}:${SPOOLMAN_PORT:-7912}:8000"
+    healthcheck:
+      # Das Image bringt weder curl noch wget mit, aber garantiert Python.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=4).status == 200 else 1)"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  # ---------------------------------------------------------------------------
+  # Spoolman Labeler — diese Anwendung
+  # ---------------------------------------------------------------------------
+  spoolman-labeler:
+    image: ${LABELER_IMAGE:-ghcr.io/sfcdx/spoolman-labeler}:${LABELER_VERSION:-0.1.0}
+    # Bis das Image veroeffentlicht ist, baut `docker compose up -d --build`
+    # lokal. Danach genuegt `docker compose pull`.
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${LABELER_VERSION:-0.1.0}
+    restart: unless-stopped
+    depends_on:
+      # required:false ist der Punkt, an dem die Profile funktionieren: ist ein
+      # Dienst per Profil abgeschaltet, ist die Abhaengigkeit einfach leer,
+      # statt dass Compose mit "service is undefined" abbricht.
+      spoolman:
+        condition: service_healthy
+        required: false
+      cups:
+        condition: service_healthy
+        required: false
+    environment:
+      TZ: ${TZ:-Europe/Berlin}
+
+      # --- Anwendung -------------------------------------------------------
+      APP_ENV: ${APP_ENV:-production}
+      APP_HOST: 0.0.0.0
+      APP_PORT: ${APP_PORT:-7913}
+      APP_LOG_LEVEL: ${APP_LOG_LEVEL:-info}
+      APP_BASE_URL: ${APP_BASE_URL:-}
+      APP_FORWARDED_ALLOW_IPS: ${APP_FORWARDED_ALLOW_IPS:-127.0.0.1}
+
+      # --- Datenbank -------------------------------------------------------
+      DATABASE_URL: ${DATABASE_URL:-sqlite+aiosqlite:////data/spoolman-labeler.db}
+
+      # --- Spoolman --------------------------------------------------------
+      # Der Container-interne Port ist 8000, nicht der nach aussen gemappte
+      # 7912. Wer Spoolman ausserhalb dieses Stacks betreibt, traegt hier die
+      # externe URL ein und nimmt das Profil "spoolman" heraus.
+      SPOOLMAN_URL: ${SPOOLMAN_URL:-http://spoolman:8000}
+      SPOOLMAN_TIMEOUT_SECONDS: ${SPOOLMAN_TIMEOUT_SECONDS:-10}
+      SPOOLMAN_VERIFY_TLS: ${SPOOLMAN_VERIFY_TLS:-true}
+
+      # --- CUPS ------------------------------------------------------------
+      # libcups wertet CUPS_SERVER vor ~/.cups/client.conf und
+      # /etc/cups/client.conf aus. Die Serverwahl ist damit reine
+      # Deployment-Konfiguration und taucht im Anwendungscode nicht auf.
+      CUPS_SERVER: ${CUPS_SERVER:-cups:631}
+      CUPS_USER: ${CUPS_ADMIN:-admin}
+      CUPS_PASSWORD: ${CUPS_PASSWORD:-}
+      CUPS_ENCRYPTION: ${CUPS_ENCRYPTION:-ifrequested}
+      CUPS_TIMEOUT_SECONDS: ${CUPS_TIMEOUT_SECONDS:-15}
+
+      # --- Etiketten-Defaults ---------------------------------------------
+      DEFAULT_PRINTER: ${DEFAULT_PRINTER:-}
+      DEFAULT_TEMPLATE: ${DEFAULT_TEMPLATE:-}
+      DEFAULT_LABEL_WIDTH_MM: ${DEFAULT_LABEL_WIDTH_MM:-62}
+      DEFAULT_LABEL_HEIGHT_MM: ${DEFAULT_LABEL_HEIGHT_MM:-29}
+      DEFAULT_LABEL_DPI: ${DEFAULT_LABEL_DPI:-300}
+      DEFAULT_COPIES: ${DEFAULT_COPIES:-1}
+
+      # --- Grenzen ---------------------------------------------------------
+      MAX_SPOOLS_PER_WORKFLOW: ${MAX_SPOOLS_PER_WORKFLOW:-24}
+      MAX_COPIES_PER_LABEL: ${MAX_COPIES_PER_LABEL:-10}
+      MAX_TEMPLATE_SIZE_BYTES: ${MAX_TEMPLATE_SIZE_BYTES:-262144}
+      MAX_UPLOAD_SIZE_BYTES: ${MAX_UPLOAD_SIZE_BYTES:-5242880}
+      RENDER_TIMEOUT_SECONDS: ${RENDER_TIMEOUT_SECONDS:-20}
+
+    # Immer gesetzt, nicht auskommentiert: Variante A braucht diesen Eintrag,
+    # und die Anforderung lautet, dass die Compose-Datei dafuer nicht
+    # bearbeitet werden muss. Wird der Name nicht benutzt, kostet er nichts.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    ports:
+      - "${LABELER_BIND_ADDRESS:-0.0.0.0}:${APP_PORT:-7913}:${APP_PORT:-7913}"
+
+    volumes:
+      # SQLite, Vorlagen, gerenderte Dateien, Logs.
+      - labeler-data:/data
+      # Variante A ohne Netzwerk-Listener auf dem Host: statt CUPS_SERVER den
+      # Unix-Socket einhaengen. Siehe docs/deployment.md.
+      # - /run/cups/cups.sock:/run/cups/cups.sock
+
+    healthcheck:
+      test: ["CMD", "/opt/venv/bin/python", "/usr/local/bin/healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    security_opt:
+      - no-new-privileges:true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ---------------------------------------------------------------------------
+  # CUPS — Druckserver-Sidecar (Variante B)
+  # ---------------------------------------------------------------------------
+  # Liegt im Profil "cups". In .env ist COMPOSE_PROFILES=spoolman,cups
+  # vorbelegt, der Sidecar laeuft also per Default mit. Fuer Variante A oder C
+  # wird "cups" dort entfernt — mehr ist nicht noetig.
+  cups:
+    profiles: ["cups"]
+    image: ${CUPS_IMAGE:-anujdatar/cups:26.07.01}
+    restart: unless-stopped
+    environment:
+      # Variablennamen des Fremd-Images (anujdatar/cups).
+      CUPSADMIN: ${CUPS_ADMIN:-admin}
+      CUPSPASSWORD: ${CUPS_PASSWORD:?ist leer. Bitte in .env setzen - auch bei Variante A/C, wo der Wert nur ungenutzt bleibt. Ein leerer Wert wuerde einen CUPS-Administrator ohne Passwort anlegen.}
+      # Variablennamen unseres eigenen Images (docker/cups). Beide zu setzen
+      # kostet nichts und macht docker-compose.cups.yml zu einem reinen
+      # Image-Tausch.
+      CUPS_ADMIN: ${CUPS_ADMIN:-admin}
+      CUPS_PASSWORD: ${CUPS_PASSWORD:?ist leer. Bitte in .env setzen - auch bei Variante A/C, wo der Wert nur ungenutzt bleibt. Ein leerer Wert wuerde einen CUPS-Administrator ohne Passwort anlegen.}
+      TZ: ${TZ:-Europe/Berlin}
+
+    ports:
+      # Default 127.0.0.1: die Web-Oberflaeche ist nur vom Docker-Host aus
+      # erreichbar. Ein Default von 0.0.0.0 wuerde bei aktivem
+      # Port-Forwarding eine CUPS-Administration ins Internet haengen.
+      # Von aussen zugreifen ohne LAN-Exposition:
+      #     ssh -L 6631:localhost:631 nutzer@homeserver
+      # Der App-Container braucht dieses Mapping nicht — er erreicht cups:631
+      # ueber das Compose-Netz.
+      - "${CUPS_BIND_ADDRESS:-127.0.0.1}:${CUPS_PORT:-631}:631"
+
+    volumes:
+      # NUR /etc/cups wird persistiert (ADR-006). /var/spool/cups und
+      # /var/cache/cups bewusst nicht: dort stehen Verweise auf Filter- und
+      # PPD-Pfade der jeweiligen Image-Version. Nach einem Update fuehren die
+      # zu haengenden Queues und "Filter failed".
+      #
+      # Named Volume, kein Bind-Mount: unabhaengig von Host-UID und
+      # Dateisystem, und Docker befuellt es beim ersten Anlegen aus dem Image.
+      - cups-config:/etc/cups
+
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+
+    device_cgroup_rules:
+      # usbfs, Character-Device Major 189, alle Minor-Nummern.
+      # DIESE Zeile ist der Teil, der das Aus- und Wiedereinstecken des
+      # Druckers ueberlebt: `devices:` allein legt die Erlaubnisliste beim
+      # Container-Start fest, ein danach neu vergebener Minor waere vom
+      # Kernel mit EPERM blockiert. Kein `privileged: true` (ADR-007).
+      - 'c 189:* rmw'
+
+    healthcheck:
+      # LC_ALL=C, damit die Ausgabe nicht lokalisiert wird.
+      test: ["CMD-SHELL", "LC_ALL=C lpstat -r >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  spoolman-data:
+  labeler-data:
+  cups-config:

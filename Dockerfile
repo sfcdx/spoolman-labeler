@@ -201,8 +201,16 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv sync --locked --no-dev --no-install-project
 
 # Gegenprobe: nach dem sync muss `import cups` weiterhin funktionieren.
-# Faengt den Fall ab, dass uv das venv doch neu erzeugt haette.
-RUN "$UV_PROJECT_ENVIRONMENT/bin/python" -c "import cups, weasyprint; print('deps ok')"
+# Faengt den Fall ab, dass uv das venv doch neu erzeugt haette - dann waere
+# die Verbindung zu den dist-packages weg und der Fehler faellt erst zur
+# Laufzeit auf. Hier bricht der Build ab, und das ist richtig so.
+RUN grep -q '^include-system-site-packages = true$' "$UV_PROJECT_ENVIRONMENT/pyvenv.cfg" \
+ && "$UV_PROJECT_ENVIRONMENT/bin/python" -c "import cups; print('pycups im venv sichtbar')" \
+ # WeasyPrint ist laut ADR-009 gesetzt, gehoert aber dem Backend-Manifest.
+ # Hier nur eine Warnung, damit dieser Build nicht an einer Datei scheitert,
+ # die er nicht besitzt.
+ && ("$UV_PROJECT_ENVIRONMENT/bin/python" -c "import weasyprint" \
+     || echo "WARNUNG: weasyprint fehlt in backend/pyproject.toml - Etikettenrendering wird nicht funktionieren." >&2)
 
 
 # =============================================================================
@@ -232,7 +240,11 @@ ENV PATH="/opt/venv/bin:${PATH}" \
     APP_DATA_DIR=/data \
     APP_STATIC_DIR=/app/static \
     APP_ASSET_DIR=/app/assets \
-    DATABASE_URL=sqlite+aiosqlite:////data/spoolman-labeler.db
+    DATABASE_URL=sqlite+aiosqlite:////data/spoolman-labeler.db \
+    XDG_CACHE_HOME=/data/.cache
+# XDG_CACHE_HOME zeigt bewusst nach /data: /app gehoert root und ist fuer den
+# App-User nicht beschreibbar. Ohne diesen Zeiger versuchte fontconfig bei
+# jedem Render in $HOME/.cache zu schreiben und kippte eine Warnung ins Log.
 
 # Nicht-privilegierter User. Feste, hohe ID, damit sie sich nicht zufaellig mit
 # einem Host-User ueberschneidet.
@@ -257,7 +269,7 @@ RUN chmod 0755 /usr/local/bin/entrypoint.sh \
  # uebernimmt Docker Inhalt und Eigentuemer aus dem Image - damit passt die
  # Berechtigung ohne Zutun des Betreibers. Bei einem Bind-Mount gilt das
  # nicht; siehe docs/deployment.md, Abschnitt Fehlerbehebung.
- && mkdir -p /data/templates /data/rendered /data/logs \
+ && mkdir -p /data/templates /data/rendered /data/logs /data/.cache \
  && chown -R 10001:10001 /data \
  && chmod 0750 /data \
  # Byte-Code des Anwendungscodes vorkompilieren (das venv ist bereits

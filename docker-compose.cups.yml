@@ -1,0 +1,35 @@
+# Override: eigenes, schlankes CUPS-Image statt anujdatar/cups
+# ============================================================
+#
+# ADR-005 legt fuer den MVP das gepflegte Fremd-Image `anujdatar/cups` fest und
+# kuendigt mittelfristig ein eigenes Image an. Diese Datei ist der Schalter
+# dazwischen — sie ersetzt ausschliesslich das Image des cups-Dienstes, alles
+# Uebrige (Profil, Volume, USB-Regeln, Ports) bleibt wie in docker-compose.yml.
+#
+# Aktivieren, ohne irgendeine Compose-Datei zu bearbeiten:
+#
+#     # .env
+#     COMPOSE_FILE=docker-compose.yml:docker-compose.cups.yml
+#
+# Danach wie gewohnt:
+#
+#     docker compose build cups
+#     docker compose up -d
+#
+# Wann sich der Wechsel lohnt (docs/printing-architecture.md, 4.2):
+#   * `printer-driver-all` im Fremd-Image loest ueber `Recommends` auf und
+#     wurde bereits aus Debian testing entfernt. Fallen die Treiber dort weg,
+#     ist dieses Image die Antwort — es nennt sie explizit.
+#   * rund 60 MB kleiner, weil der HP-Inkjet-Treiberstack fehlt.
+#   * Persistenz-Entrypoint und cupsd.conf sind unsere, nicht die eines
+#     Fremd-Maintainers.
+#
+# Preis: Sicherheitsupdates werden unsere Aufgabe. Ohne zeitgesteuerten
+# CI-Rebuild ist dieses Image schnell schlechter als das gepflegte Fremd-Image.
+
+services:
+  cups:
+    image: ${CUPS_IMAGE:-ghcr.io/sfcdx/spoolman-labeler-cups:0.1.0}
+    build:
+      context: ./docker/cups
+      dockerfile: Dockerfile

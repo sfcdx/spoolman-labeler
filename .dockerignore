@@ -1,0 +1,90 @@
+# Build-Kontext fuer das Anwendungs-Image.
+#
+# Grundsatz: alles ausschliessen, dann gezielt das wieder hereinholen, was der
+# Build wirklich braucht. Das haelt den Kontext klein (schneller Upload zum
+# BuildKit-Daemon), verhindert, dass lokale Geheimnisse oder Laufzeitdaten
+# versehentlich in ein Image wandern, und macht den Build unabhaengig davon,
+# was im Arbeitsverzeichnis sonst noch herumliegt.
+
+*
+
+# --- was in den Build gehoert ----------------------------------------------
+!backend
+!frontend
+!docker
+
+# --- und was davon trotzdem draussen bleibt --------------------------------
+
+# Geheimnisse. Doppelte Absicherung: .gitignore haelt sie aus Git heraus,
+# das hier haelt sie aus dem Image heraus.
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key
+**/secrets/
+**/*.secret
+**/credentials.json
+**/.netrc
+
+# Laufzeitdaten - enthalten echtes Inventar und Druckhistorie.
+# Bewusst kein pauschales '**/data/': ein Python-Paket 'backend/app/data/'
+# waere sonst still aus dem Image verschwunden.
+**/*.db
+**/*.db-journal
+**/*.db-wal
+**/*.db-shm
+**/*.sqlite
+**/*.sqlite3
+**/rendered/
+**/logs/
+**/*.log
+
+# Node
+**/node_modules/
+**/dist/
+**/dist-ssr/
+**/.vite/
+**/.turbo/
+**/.eslintcache
+**/npm-debug.log*
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/.venv/
+**/venv/
+**/*.egg-info/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.coverage
+**/.coverage.*
+**/htmlcov/
+**/.tox/
+**/.nox/
+**/.hypothesis/
+
+# uv/pyenv wuerden im Container eine andere Python-Version erzwingen als die
+# der Distribution - und damit die ABI-Bindung an python3-cups brechen.
+# Siehe Dockerfile, Abschnitt "python3-cups trifft auf uv".
+**/.python-version
+
+# Tests und Werkzeugkonfiguration werden im Laufzeit-Image nicht gebraucht.
+**/tests/
+**/test-results/
+**/playwright-report/
+**/blob-report/
+**/.playwright/
+
+# Editor und Betriebssystem
+**/.vscode/
+**/.idea/
+**/*.swp
+**/*.swo
+**/*~
+**/.DS_Store
+**/Thumbs.db
+**/desktop.ini
+**/*.bak
+**/*.orig
