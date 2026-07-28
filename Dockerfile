@@ -67,7 +67,7 @@ ENV CI=1 \
 
 # Erst nur die Manifeste kopieren: solange sich package.json/package-lock.json
 # nicht aendern, bleibt die (teure) Installationsschicht im Cache.
-COPY frontend/package.json frontend/package-lock.jso[n] ./
+COPY frontend/package.json frontend/package-lock.json ./
 
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     if [ -f package-lock.json ]; then \
@@ -234,11 +234,12 @@ LABEL org.opencontainers.image.title="Spoolman Labeler" \
 ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    # Defaults, die backend/app/core/config.py liest. Nichts davon ist geheim.
+    # Vom Anwendungscode gelesene Defaults. Alles hier ist nicht-geheim.
     APP_HOST=0.0.0.0 \
     APP_PORT=7913 \
-    DATA_DIR=/data \
-    STATIC_DIR=/app/static \
+    APP_DATA_DIR=/data \
+    APP_STATIC_DIR=/app/static \
+    APP_ASSET_DIR=/app/assets \
     DATABASE_URL=sqlite+aiosqlite:////data/spoolman-labeler.db \
     XDG_CACHE_HOME=/data/.cache
 # XDG_CACHE_HOME zeigt bewusst nach /data: /app gehoert root und ist fuer den
