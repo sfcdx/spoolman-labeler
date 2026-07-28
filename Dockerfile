@@ -234,12 +234,11 @@ LABEL org.opencontainers.image.title="Spoolman Labeler" \
 ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    # Vom Anwendungscode gelesene Defaults. Alles hier ist nicht-geheim.
+    # Defaults, die backend/app/core/config.py liest. Nichts davon ist geheim.
     APP_HOST=0.0.0.0 \
     APP_PORT=7913 \
-    APP_DATA_DIR=/data \
-    APP_STATIC_DIR=/app/static \
-    APP_ASSET_DIR=/app/assets \
+    DATA_DIR=/data \
+    STATIC_DIR=/app/static \
     DATABASE_URL=sqlite+aiosqlite:////data/spoolman-labeler.db \
     XDG_CACHE_HOME=/data/.cache
 # XDG_CACHE_HOME zeigt bewusst nach /data: /app gehoert root und ist fuer den

@@ -84,13 +84,14 @@ konfliktfrei, was selbst ein Stueck Update-Stabilitaet ist.
 Zwei Variablen genuegen:
 
 * `COMPOSE_PROFILES` — welche Dienste ueberhaupt starten
-* `CUPS_SERVER` — wohin die Anwendung ihre Druckauftraege schickt
+* `CUPS_SERVER` — der **Hostname** des CUPS-Servers (der Port steht getrennt
+  in `CUPS_PORT`, Default 631)
 
 | Variante | `COMPOSE_PROFILES` | `CUPS_SERVER` |
 | --- | --- | --- |
-| **B** — Sidecar im Stack (Default) | `spoolman,cups` | `cups:631` |
-| **A** — CUPS auf dem Docker-Host | `spoolman` | `host.docker.internal:631` |
-| **C** — CUPS-Server im LAN | `spoolman` | `printserver.example.local:631` |
+| **B** — Sidecar im Stack (Default) | `spoolman,cups` | `cups` |
+| **A** — CUPS auf dem Docker-Host | `spoolman` | `host.docker.internal` |
+| **C** — CUPS-Server im LAN | `spoolman` | `printserver.example.local` |
 
 Nach jeder Aenderung:
 
@@ -115,7 +116,7 @@ Klonen ist kein manuelles CUPS-Setup auf dem Host noetig.
 
 ```dotenv
 COMPOSE_PROFILES=spoolman
-CUPS_SERVER=host.docker.internal:631
+CUPS_SERVER=host.docker.internal
 ```
 
 `host.docker.internal` existiert unter Linux nicht von Haus aus. Die
@@ -175,7 +176,7 @@ fragil.
 
 ```dotenv
 COMPOSE_PROFILES=spoolman
-CUPS_SERVER=printserver.example.local:631
+CUPS_SERVER=printserver.example.local
 CUPS_ADMIN=<Benutzername auf dem Printserver>
 CUPS_PASSWORD=<dessen Passwort>
 ```
@@ -183,7 +184,7 @@ CUPS_PASSWORD=<dessen Passwort>
 Wenn der Server TLS erzwingt (`DefaultEncryption Required`):
 
 ```dotenv
-CUPS_ENCRYPTION=required
+CUPS_USE_TLS=true
 ```
 
 Der Drucker-URI-Drift ist hier der haeufigste Aerger: Wir haben keine
@@ -196,7 +197,8 @@ Symmetrisch zu den CUPS-Varianten:
 
 ```dotenv
 COMPOSE_PROFILES=cups
-SPOOLMAN_URL=http://192.0.2.10:7912
+SPOOLMAN_API_URL=http://192.0.2.10:7912
+SPOOLMAN_PUBLIC_URL=http://192.0.2.10:7912
 ```
 
 > Wenn Spoolman **in** diesem Stack laeuft, ist die richtige URL
@@ -784,7 +786,7 @@ Weitere Hinweise fuer den Pi:
 | Symptom | Ursache und Abhilfe |
 | --- | --- |
 | `docker compose config` bricht mit `required variable CUPS_PASSWORD is missing a value` ab | In `.env` ist `CUPS_PASSWORD` leer. Der Wert wird auch dann gebraucht, wenn CUPS extern laeuft — er bleibt dort nur ungenutzt. Ein leerer Wert wuerde einen CUPS-Administrator ohne Passwort anlegen. |
-| Anwendung erreicht Spoolman nicht | `SPOOLMAN_URL` zeigt auf `:7912` statt `:8000`. Innerhalb des Compose-Netzes gilt der **Container**-Port: `http://spoolman:8000`. |
+| Anwendung erreicht Spoolman nicht | `SPOOLMAN_API_URL` zeigt auf `:7912` statt `:8000`. Innerhalb des Compose-Netzes gilt der **Container**-Port: `http://spoolman:8000`. |
 | `CUPS_UNREACHABLE` bei Variante A | Der Host-`cupsd` lauscht nur auf `localhost`. Siehe 2.2 — oder den Unix-Socket verwenden. |
 | Web-UI von CUPS meldet „Unauthorized" trotz korrekter Zugangsdaten | Der Unix-Socket-Listener fehlt. Die Web-UI-CGIs brauchen `Listen /run/cups/cups.sock` fuer ihren privilegierten Back-Channel. Im eigenen Image ist er gesetzt. |
 | CUPS antwortet mit „Bad Request" | `ServerAlias *` fehlt. Der Container wird unter wechselnden Namen angesprochen (`cups`, Container-IP, `127.0.0.1`); ohne `ServerAlias` lehnt `cupsd` wegen Host-Header-Mismatch ab. |
@@ -804,7 +806,7 @@ docker compose logs -f --tail=100 cups
 
 # CUPS-Sicht aus dem Anwendungscontainer heraus - prueft die komplette Kette
 # aus CUPS_SERVER, Netzwerk und Authentifizierung:
-docker compose exec spoolman-labeler lpstat -h "$CUPS_SERVER" -t
+docker compose exec spoolman-labeler sh -c 'lpstat -h "${CUPS_SERVER}:${CUPS_PORT}" -t'
 docker compose exec spoolman-labeler python -c "import cups; print(cups.Connection().getPrinters())"
 
 # Vollstaendiger CUPS-Zustand
@@ -1084,6 +1086,62 @@ Tests), `usbutils`, `ca-certificates`, `tzdata`, `tini`.
 auf und wurde aus Debian testing entfernt — genau deshalb steht hier eine
 explizite Liste), `avahi-daemon` (ADR-007, siehe Abschnitt 4), `hplip`,
 `openprinting-ppds`, `hpijs-ppds`, `foomatic-db-compressed-ppds`, `smbclient`.
+
+### 9.5 Umgebungsvariablen der Anwendung
+
+Die Anwendung liest ihre Konfiguration mit `pydantic-settings` **ohne
+Praefix** und case-insensitiv. Die Variablennamen entsprechen damit eins zu
+eins den Feldern in `backend/app/core/config.py`; unbekannte Variablen werden
+ignoriert. Zwei Stolperstellen sind erwaehnenswert:
+
+* **`LOG_LEVEL` nur in Grossbuchstaben.** Das Feld ist ein
+  `Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]` — ein
+  `LOG_LEVEL=info` laesst den Container beim Start an der Validierung
+  scheitern. Der Entrypoint setzt den Wert fuer uvicorn selbst auf
+  Kleinschreibung um; es gibt bewusst nur diese eine Variable.
+* **`CUPS_SERVER` enthaelt nur den Hostnamen**, der Port steht getrennt in
+  `CUPS_PORT`. Die Anwendung baut daraus die von `libcups` ausgewerteten
+  Variablen `CUPS_SERVER` und `IPP_PORT`. Ein `CUPS_SERVER=cups:631` waere
+  also doppelt gemoppelt.
+
+| Variable | Feld | Default im Stack |
+| --- | --- | --- |
+| `APP_HOST`, `APP_PORT`, `APP_ENV` | `app_host`, `app_port`, `app_env` | `0.0.0.0`, `7913`, `production` |
+| `LOG_LEVEL` | `log_level` | `INFO` |
+| `DATA_DIR`, `STATIC_DIR` | `data_dir`, `static_dir` | `/data`, `/app/static` |
+| `DATABASE_URL` | `database_url` | SQLite unter `/data` |
+| `SPOOLMAN_API_URL` | `spoolman_api_url` | `http://spoolman:8000` |
+| `SPOOLMAN_PUBLIC_URL` | `spoolman_public_url` | `http://localhost:7912` |
+| `SPOOLMAN_TIMEOUT_SECONDS` | `spoolman_timeout_seconds` | `10` |
+| `SPOOLMAN_API_TOKEN` | `spoolman_api_token` | leer (reserviert, ADR-002) |
+| `CUPS_SERVER`, `CUPS_PORT` | `cups_server`, `cups_port` | `cups`, `631` |
+| `CUPS_USERNAME`, `CUPS_PASSWORD` | `cups_username`, `cups_password` | aus `CUPS_ADMIN` / `CUPS_PASSWORD` |
+| `CUPS_USE_TLS`, `CUPS_TIMEOUT_SECONDS` | `cups_use_tls`, `cups_timeout_seconds` | `false`, `10` |
+| `DEFAULT_PRINTER`, `DEFAULT_TEMPLATE` | dito | leer |
+| `DEFAULT_LABEL_WIDTH_MM`, `DEFAULT_LABEL_HEIGHT_MM`, `DEFAULT_DPI` | dito | `62`, `29`, `300` |
+| `MAX_SPOOLS_PER_WORKFLOW`, `MAX_PRINT_RETRIES` | dito | `50`, `2` |
+| `MAX_TEMPLATE_UPLOAD_BYTES` | `max_template_upload_bytes` | `1048576` |
+| `RENDER_TIMEOUT_SECONDS` | `render_timeout_seconds` | `15` |
+
+**Docker Secrets.** Zu `CUPS_PASSWORD`, `CUPS_USERNAME` und
+`SPOOLMAN_API_TOKEN` wertet die Anwendung zusaetzlich `<NAME>_FILE` aus — den
+Pfad zu einer Datei mit dem Wert. Ein direkt gesetztes `<NAME>` hat Vorrang.
+
+```yaml
+# docker-compose.override.yml
+services:
+  spoolman-labeler:
+    environment:
+      CUPS_PASSWORD_FILE: /run/secrets/cups_password
+    secrets: [cups_password]
+secrets:
+  cups_password:
+    file: ./secrets/cups_password.txt
+```
+
+> Das gilt nur fuer den **Anwendungs**container. Der CUPS-Sidecar liest
+> ausschliesslich `CUPS_PASSWORD` direkt aus der Umgebung — `.env` bleibt dort
+> die einzige Quelle.
 
 ---
 

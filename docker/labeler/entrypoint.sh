@@ -17,8 +17,12 @@ die() { printf '[entrypoint] FEHLER: %s\n' "$*" >&2; exit 1; }
 
 APP_HOST="${APP_HOST:-0.0.0.0}"
 APP_PORT="${APP_PORT:-7913}"
-APP_DATA_DIR="${APP_DATA_DIR:-/data}"
-APP_LOG_LEVEL="${APP_LOG_LEVEL:-info}"
+# Die Anwendung liest DATA_DIR (siehe backend/app/core/config.py).
+DATA_DIR="${DATA_DIR:-/data}"
+# LOG_LEVEL ist fuer die Anwendung gross geschrieben ("INFO"), uvicorn will es
+# klein ("info"). Hier wird umgesetzt, statt zwei Variablen zu pflegen.
+LOG_LEVEL="${LOG_LEVEL:-INFO}"
+UVICORN_LOG_LEVEL=$(printf '%s' "$LOG_LEVEL" | tr '[:upper:]' '[:lower:]')
 APP_WORKERS="${APP_WORKERS:-1}"
 # uvicorn vertraut X-Forwarded-* nur von den hier genannten Adressen.
 # Default bewusst restriktiv; hinter einem Reverse Proxy anpassen.
@@ -38,23 +42,23 @@ fi
 
 # --- 2) Datenverzeichnis ----------------------------------------------------
 
-if [ ! -d "$APP_DATA_DIR" ]; then
-    die "Datenverzeichnis '${APP_DATA_DIR}' existiert nicht. Volume nicht eingebunden?"
+if [ ! -d "$DATA_DIR" ]; then
+    die "Datenverzeichnis '${DATA_DIR}' existiert nicht. Volume nicht eingebunden?"
 fi
 
 if ! mkdir -p \
-        "${APP_DATA_DIR}/templates" \
-        "${APP_DATA_DIR}/rendered" \
-        "${APP_DATA_DIR}/logs" \
-        "${APP_DATA_DIR}/.cache" 2>/dev/null; then
-    die "Kein Schreibrecht auf '${APP_DATA_DIR}' (laufe als UID $(id -u), GID $(id -g)).
+        "${DATA_DIR}/templates" \
+        "${DATA_DIR}/rendered" \
+        "${DATA_DIR}/logs" \
+        "${DATA_DIR}/.cache" 2>/dev/null; then
+    die "Kein Schreibrecht auf '${DATA_DIR}' (laufe als UID $(id -u), GID $(id -g)).
          Bei einem Bind-Mount muss das Host-Verzeichnis dieser UID gehoeren:
              sudo chown -R 10001:10001 <host-verzeichnis>
          Details: docs/deployment.md, Abschnitt 'Berechtigungsprobleme'."
 fi
 
-if [ ! -w "$APP_DATA_DIR" ]; then
-    die "'${APP_DATA_DIR}' ist nicht beschreibbar (UID $(id -u), GID $(id -g))."
+if [ ! -w "$DATA_DIR" ]; then
+    die "'${DATA_DIR}' ist nicht beschreibbar (UID $(id -u), GID $(id -g))."
 fi
 
 # --- 3) Migrationen ---------------------------------------------------------
@@ -86,6 +90,6 @@ exec uvicorn app.main:app \
     --host "$APP_HOST" \
     --port "$APP_PORT" \
     --workers "$APP_WORKERS" \
-    --log-level "$APP_LOG_LEVEL" \
+    --log-level "$UVICORN_LOG_LEVEL" \
     --proxy-headers \
     --forwarded-allow-ips "$APP_FORWARDED_ALLOW_IPS"
