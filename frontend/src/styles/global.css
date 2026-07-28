@@ -1,0 +1,78 @@
+/*
+ * Minimale eigene Regeln.
+ *
+ * Das gesamte visuelle System kommt aus Ant Design 5 (CSS-in-JS). Hier stehen
+ * nur Dinge, die Ant Design nicht abdeckt: Grundlayout des Dokuments,
+ * Barrierefreiheits-Hilfsklassen und ein deutlich sichtbarer Fokusring.
+ * Es werden keinerlei externe Ressourcen geladen (keine Webfonts, keine
+ * Remote-Bilder) — die Schrift ist Ant Designs System-Stack.
+ */
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+}
+
+/* Sichtbarer Fokus auf allen Bedienelementen — nie nur ein Farbwechsel. */
+:focus-visible {
+  outline: 2px solid var(--sl-color-primary, #dc7734);
+  outline-offset: 2px;
+  border-radius: var(--sl-border-radius, 6px);
+}
+
+/* Nur fuer Screenreader sichtbar. */
+.sl-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Sprungmarke zum Hauptinhalt: erst bei Tastaturfokus sichtbar. */
+.sl-skip-link {
+  position: absolute;
+  top: -100px;
+  left: 8px;
+  z-index: 1000;
+  padding: 10px 16px;
+  color: #ffffff;
+  background: var(--sl-color-primary, #dc7734);
+  border-radius: var(--sl-border-radius, 6px);
+  text-decoration: none;
+  transition: top 0.15s ease-in-out;
+}
+
+.sl-skip-link:focus,
+.sl-skip-link:focus-visible {
+  top: 8px;
+}
+
+/* Grosse Beruehrungsziele in der mobilen Navigation. */
+.sl-drawer-nav .ant-menu-item {
+  height: 48px;
+  line-height: 48px;
+  margin-inline: 0;
+  border-radius: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
