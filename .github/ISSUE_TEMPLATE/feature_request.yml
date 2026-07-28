@@ -1,0 +1,31 @@
+name: Funktionswunsch
+description: Eine neue Funktion oder Verbesserung vorschlagen
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Welches Problem löst das?
+      description: Beschreibe den Anwendungsfall, nicht nur die gewünschte Lösung.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Gewünschte Lösung
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Erwogene Alternativen
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Einordnung
+      options:
+        - label: Ich habe geprüft, ob der Punkt bereits unter „Spätere Erweiterungen“ in der Dokumentation steht
+        - label: Diese Funktion würde keinen direkten Schreibzugriff auf die Spoolman-Datenbank erfordern

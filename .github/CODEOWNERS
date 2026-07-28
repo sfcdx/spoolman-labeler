@@ -1,0 +1,8 @@
+# Standard-Reviewer für alle Änderungen.
+*       @sfcdx
+
+# Sicherheitsrelevante Bereiche brauchen besondere Aufmerksamkeit.
+/SECURITY.md            @sfcdx
+/.github/workflows/     @sfcdx
+/backend/app/services/printing/   @sfcdx
+/backend/app/services/rendering/  @sfcdx

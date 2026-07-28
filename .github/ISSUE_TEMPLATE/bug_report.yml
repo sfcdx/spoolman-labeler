@@ -1,0 +1,86 @@
+name: Fehlerbericht
+description: Einen Fehler in Spoolman Labeler melden
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Danke für die Meldung!
+
+        **Bitte keine Zugangsdaten, echten IP-Adressen, Hostnamen oder
+        personenbezogenen Daten einfügen.** Ersetze sie durch Platzhalter
+        wie `192.0.2.10` oder `SERVER-IP`. Logs bitte vorher durchsehen.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Beschreibung
+      description: Was ist passiert?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Schritte zur Reproduktion
+      placeholder: |
+        1. Gehe zu „Neue Spule“
+        2. Wähle Filament X
+        3. Klicke „Speichern und drucken“
+        4. Fehler erscheint
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Erwartetes Verhalten
+    validations:
+      required: true
+
+  - type: input
+    id: labeler-version
+    attributes:
+      label: Spoolman-Labeler-Version
+      placeholder: "z.B. 0.1.0 oder Image-Tag latest"
+    validations:
+      required: true
+
+  - type: input
+    id: spoolman-version
+    attributes:
+      label: Spoolman-Version
+      placeholder: "siehe Einstellungen → Spoolman → Verbindung testen"
+
+  - type: dropdown
+    id: cups-setup
+    attributes:
+      label: CUPS-Setup
+      options:
+        - CUPS-Container aus dem Compose-Stack
+        - CUPS auf dem Docker-Host
+        - Externer CUPS-Server im Netzwerk
+        - Unbekannt
+    validations:
+      required: true
+
+  - type: input
+    id: printer
+    attributes:
+      label: Druckermodell
+      placeholder: "z.B. Brother QL-800"
+
+  - type: input
+    id: platform
+    attributes:
+      label: Plattform und Architektur
+      placeholder: "z.B. Debian 12, amd64 / Raspberry Pi OS, arm64"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevante Logs
+      description: "Ausgabe von `docker compose logs spoolman-labeler` — bitte gekürzt und bereinigt."
+      render: text

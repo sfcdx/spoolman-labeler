@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Sicherheitslücke melden
+    url: https://github.com/sfcdx/spoolman-labeler/security/advisories/new
+    about: Sicherheitsprobleme bitte vertraulich melden, nicht als öffentliches Issue.
+  - name: Frage oder Diskussion
+    url: https://github.com/sfcdx/spoolman-labeler/discussions
+    about: Für Fragen zur Einrichtung und allgemeinen Austausch.
