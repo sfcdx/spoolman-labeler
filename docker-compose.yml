@@ -76,9 +76,6 @@ services:
       cups:
         condition: service_healthy
         required: false
-    # Die Variablennamen entsprechen exakt den Feldern in
-    # backend/app/core/config.py (pydantic-settings, ohne env_prefix,
-    # case-insensitive). Unbekannte Variablen werden dort ignoriert.
     environment:
       TZ: ${TZ:-Europe/Berlin}
 
@@ -86,41 +83,32 @@ services:
       APP_ENV: ${APP_ENV:-production}
       APP_HOST: 0.0.0.0
       APP_PORT: ${APP_PORT:-7913}
-      # Nur Grossbuchstaben: das Feld ist ein Literal
-      # ("DEBUG"|"INFO"|"WARNING"|"ERROR"|"CRITICAL").
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      # Wird nur vom Entrypoint an uvicorn weitergereicht, nicht von der
-      # Anwendung gelesen.
+      APP_BASE_URL: ${APP_BASE_URL:-}
       APP_FORWARDED_ALLOW_IPS: ${APP_FORWARDED_ALLOW_IPS:-127.0.0.1}
 
       # --- Datenbank -------------------------------------------------------
       DATABASE_URL: ${DATABASE_URL:-sqlite+aiosqlite:////data/spoolman-labeler.db}
 
       # --- Spoolman --------------------------------------------------------
-      # SPOOLMAN_API_URL ist die Adresse, unter der die ANWENDUNG Spoolman
-      # erreicht: im Compose-Netz der Container-Port 8000, nicht der nach
-      # aussen gemappte 7912.
+      # Der Container-interne Port ist 8000, nicht der nach aussen gemappte
+      # 7912. Wer Spoolman ausserhalb dieses Stacks betreibt, traegt hier die
+      # externe URL ein und nimmt das Profil "spoolman" heraus.
       SPOOLMAN_API_URL: ${SPOOLMAN_API_URL:-http://spoolman:8000}
-      # SPOOLMAN_PUBLIC_URL ist die Adresse, die in Links und QR-Codes landet,
-      # also die, die ein MENSCH im Browser aufruft.
       SPOOLMAN_PUBLIC_URL: ${SPOOLMAN_PUBLIC_URL:-http://localhost:7912}
       SPOOLMAN_TIMEOUT_SECONDS: ${SPOOLMAN_TIMEOUT_SECONDS:-10}
-      # SPOOLMAN_API_TOKEN wird hier bewusst NICHT durchgereicht: Spoolman
-      # kennt heute keine Authentifizierung (ADR-002), und ein leer
-      # durchgereichter Wert waere fuer die Anwendung ein gesetztes, leeres
-      # Geheimnis. Wer ihn braucht, setzt ihn in docker-compose.override.yml.
+      SPOOLMAN_VERIFY_TLS: ${SPOOLMAN_VERIFY_TLS:-true}
 
       # --- CUPS ------------------------------------------------------------
-      # CUPS_SERVER ist der reine HOSTNAME, der Port steht in CUPS_PORT.
-      # Die Anwendung setzt daraus die von libcups ausgewerteten Variablen
-      # CUPS_SERVER und IPP_PORT, die noch vor client.conf greifen. Die
-      # Serverwahl ist damit reine Deployment-Konfiguration.
+      # libcups wertet CUPS_SERVER vor ~/.cups/client.conf und
+      # /etc/cups/client.conf aus. Die Serverwahl ist damit reine
+      # Deployment-Konfiguration und taucht im Anwendungscode nicht auf.
       CUPS_SERVER: ${CUPS_SERVER:-cups}
       CUPS_PORT: ${CUPS_PORT:-631}
       CUPS_USERNAME: ${CUPS_ADMIN:-admin}
       CUPS_PASSWORD: ${CUPS_PASSWORD:-}
       CUPS_USE_TLS: ${CUPS_USE_TLS:-false}
-      CUPS_TIMEOUT_SECONDS: ${CUPS_TIMEOUT_SECONDS:-10}
+      CUPS_TIMEOUT_SECONDS: ${CUPS_TIMEOUT_SECONDS:-15}
 
       # --- Etiketten-Defaults ---------------------------------------------
       DEFAULT_PRINTER: ${DEFAULT_PRINTER:-}
@@ -130,10 +118,10 @@ services:
       DEFAULT_DPI: ${DEFAULT_DPI:-300}
 
       # --- Grenzen ---------------------------------------------------------
-      MAX_SPOOLS_PER_WORKFLOW: ${MAX_SPOOLS_PER_WORKFLOW:-50}
+      MAX_SPOOLS_PER_WORKFLOW: ${MAX_SPOOLS_PER_WORKFLOW:-24}
       MAX_PRINT_RETRIES: ${MAX_PRINT_RETRIES:-2}
       MAX_TEMPLATE_UPLOAD_BYTES: ${MAX_TEMPLATE_UPLOAD_BYTES:-1048576}
-      RENDER_TIMEOUT_SECONDS: ${RENDER_TIMEOUT_SECONDS:-15}
+      RENDER_TIMEOUT_SECONDS: ${RENDER_TIMEOUT_SECONDS:-20}
 
     # Immer gesetzt, nicht auskommentiert: Variante A braucht diesen Eintrag,
     # und die Anforderung lautet, dass die Compose-Datei dafuer nicht
