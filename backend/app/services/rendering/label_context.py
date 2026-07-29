@@ -39,6 +39,53 @@ SAMPLE_SPOOL: dict[str, Any] = {
 }
 
 
+#: Spoolman laesst Felder mit dem Wert ``null`` in JSON-Antworten komplett
+#: weg (``exclude_none=True``, siehe docs/spoolman-api-analysis.md Abschnitt
+#: 3.1/4.1/5.1) statt sie als ``null`` zu senden. Ohne diese Vorbelegung wuerde
+#: z. B. ``{{ filament.name or filament.material }}`` in der Jinja-Sandbox
+#: (``StrictUndefined``) nicht auf den Fallback zurueckfallen, sondern mit
+#: einem ``UndefinedError`` abbrechen, sobald Spoolman ein einziges
+#: null-Feld ausgelassen hat — was im Normalbetrieb staendig vorkommt.
+_SPOOL_DEFAULTS: dict[str, Any] = {
+    "first_used": None,
+    "last_used": None,
+    "price": None,
+    "initial_weight": None,
+    "spool_weight": None,
+    "remaining_weight": None,
+    "remaining_length": None,
+    "location": None,
+    "lot_nr": None,
+    "comment": None,
+    "extra": {},
+}
+_FILAMENT_DEFAULTS: dict[str, Any] = {
+    "id": None,
+    "name": None,
+    "material": None,
+    "price": None,
+    "weight": None,
+    "spool_weight": None,
+    "article_number": None,
+    "comment": None,
+    "settings_extruder_temp": None,
+    "settings_bed_temp": None,
+    "color_hex": None,
+    "multi_color_hexes": None,
+    "multi_color_direction": None,
+    "external_id": None,
+    "extra": {},
+}
+_VENDOR_DEFAULTS: dict[str, Any] = {
+    "id": None,
+    "name": None,
+    "comment": None,
+    "empty_spool_weight": None,
+    "external_id": None,
+    "extra": {},
+}
+
+
 def build_label_context(spool: dict[str, Any], qr_data_uri: str) -> dict[str, Any]:
     """Baut den Render-Kontext aus einem Spoolman-Spulen-Datensatz.
 
@@ -50,8 +97,8 @@ def build_label_context(spool: dict[str, Any], qr_data_uri: str) -> dict[str, An
     vendor = filament.get("vendor")
     vendor = vendor if isinstance(vendor, dict) else {}
     return {
-        "spool": spool,
-        "filament": filament,
-        "vendor": vendor,
+        "spool": {**_SPOOL_DEFAULTS, **spool},
+        "filament": {**_FILAMENT_DEFAULTS, **filament},
+        "vendor": {**_VENDOR_DEFAULTS, **vendor},
         "qr_code": qr_data_uri,
     }

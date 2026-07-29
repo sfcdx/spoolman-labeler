@@ -40,8 +40,13 @@ class CreateAndPrintRequest(BaseModel):
     #: Ohne filament_id — siehe CreateOnlyRequest fuer die Begruendung.
     spool: SpoolFields
     quantity: int = Field(default=1, ge=1)
-    template_id: int = Field(gt=0)
-    printer_id: int = Field(gt=0)
+    #: ``None`` loest serverseitig die Standardvorlage/den Standarddrucker auf
+    #: (siehe ``templates_service.get_default_template``/
+    #: ``printers_service.get_default_printer``) — damit reicht nach der
+    #: Spulenauswahl ein einziger Klick zum Drucken, ohne dass Drucker/Vorlage
+    #: jedes Mal erneut gewaehlt werden muessen.
+    template_id: int | None = Field(default=None, gt=0)
+    printer_id: int | None = Field(default=None, gt=0)
     #: ``None`` uebernimmt die Voreinstellung des gewaehlten Druckers.
     copies: int | None = Field(default=None, ge=1, le=100)
 
@@ -64,8 +69,16 @@ class CreateAndPrintService:
 
         # Fehlende Vorlage/Drucker sind ein reiner Eingabefehler und werden
         # geprueft, bevor ueberhaupt etwas in Spoolman angelegt wird.
-        template = await templates_service.get_template(self.session, request.template_id)
-        printer = await printers_service.get_printer(self.session, request.printer_id)
+        template = (
+            await templates_service.get_template(self.session, request.template_id)
+            if request.template_id is not None
+            else await templates_service.get_default_template(self.session)
+        )
+        printer = (
+            await printers_service.get_printer(self.session, request.printer_id)
+            if request.printer_id is not None
+            else await printers_service.get_default_printer(self.session)
+        )
         copies = request.copies or printer.copies
 
         run = WorkflowRun(
@@ -152,7 +165,7 @@ class CreateAndPrintService:
         print_job.attempt_count += 1
         try:
             context = build_label_context(record.model_dump(), self.renderer.qr_data_uri(record.id))
-            pdf_bytes = self.renderer.render_pdf(
+            pdf_bytes = await self.renderer.render_pdf(
                 html_content=template.html_content,
                 css_content=template.css_content,
                 width_mm=template.width_mm,

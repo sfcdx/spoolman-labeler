@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.parse import unquote, urlparse
 
+import anyio
 import segno
 from jinja2 import StrictUndefined
 from jinja2.sandbox import SandboxedEnvironment
@@ -39,7 +40,7 @@ class LabelRenderer:
         # `allow_redirects=False` erhält das bisherige, engere Verhalten.
         self._fetcher = URLFetcher(allowed_protocols=("data", "file"), allow_redirects=False)
 
-    def render_pdf(
+    async def render_pdf(
         self,
         *,
         html_content: str,
@@ -48,7 +49,45 @@ class LabelRenderer:
         height_mm: float,
         context: Mapping[str, Any],
     ) -> bytes:
-        """Rendert ein Etikett und hebt nur sichere, stabile Fehler hervor."""
+        """Rendert ein Etikett in einem Worker-Thread, mit harter Zeitbegrenzung.
+
+        WeasyPrint ist blockierend; ohne Worker-Thread wuerde ein teures oder
+        pathologisches Template (z. B. aus einem veraenderten Spoolman-Preset)
+        den gesamten Event-Loop blockieren (Single-Worker-Betrieb, siehe
+        ADR-014). ``anyio.fail_after`` erzwingt die in ADR-014 versprochene,
+        bislang nicht durchgesetzte harte Zeitbegrenzung.
+        """
+        try:
+            with anyio.fail_after(self.settings.render_timeout_seconds):
+                return await anyio.to_thread.run_sync(
+                    lambda: self._render_pdf_sync(
+                        html_content=html_content,
+                        css_content=css_content,
+                        width_mm=width_mm,
+                        height_mm=height_mm,
+                        context=context,
+                    ),
+                    # abandon_on_cancel=True: bei Ueberschreitung soll der Request
+                    # sofort zurueckkehren, statt auf das Ende des (moeglicherweise
+                    # haengenden) WeasyPrint-Aufrufs im Worker-Thread zu warten.
+                    # Der Thread laeuft dann verwaist zu Ende, blockiert aber
+                    # nicht laenger den Request.
+                    abandon_on_cancel=True,
+                )
+        except TimeoutError as exc:
+            raise AppError(
+                ErrorCode.TEMPLATE_RENDER_FAILED, detail="Zeitüberschreitung beim Rendern"
+            ) from exc
+
+    def _render_pdf_sync(
+        self,
+        *,
+        html_content: str,
+        css_content: str,
+        width_mm: float,
+        height_mm: float,
+        context: Mapping[str, Any],
+    ) -> bytes:
         if width_mm <= 0 or height_mm <= 0:
             raise AppError(ErrorCode.TEMPLATE_INVALID, detail="Etikettenmaße müssen positiv sein")
         if (

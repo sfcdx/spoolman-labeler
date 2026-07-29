@@ -102,7 +102,7 @@ async def preview_template(
     """Rendert eine (noch nicht gespeicherte) Vorlage mit Beispieldaten."""
     renderer = LabelRenderer(settings)
     context = build_label_context(SAMPLE_SPOOL, renderer.qr_data_uri(SAMPLE_SPOOL["id"]))
-    pdf_bytes = renderer.render_pdf(
+    pdf_bytes = await renderer.render_pdf(
         html_content=data.html_content,
         css_content=data.css_content,
         width_mm=data.width_mm,
@@ -122,7 +122,7 @@ async def preview_saved_template(
     template = await templates_service.get_template(session, template_id)
     renderer = LabelRenderer(settings)
     context = build_label_context(SAMPLE_SPOOL, renderer.qr_data_uri(SAMPLE_SPOOL["id"]))
-    pdf_bytes = renderer.render_pdf(
+    pdf_bytes = await renderer.render_pdf(
         html_content=template.html_content,
         css_content=template.css_content,
         width_mm=template.width_mm,

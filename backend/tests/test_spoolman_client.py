@@ -66,6 +66,53 @@ async def test_print_presets_entpackt_den_json_setting_wert() -> None:
 
 
 @respx.mock
+async def test_vendors_und_filaments_senden_limit_und_saubere_namensfilter() -> None:
+    vendor_route = respx.get("http://spoolman:8000/api/v1/vendor").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    filament_route = respx.get("http://spoolman:8000/api/v1/filament").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    client = SpoolmanClient(Settings())
+
+    await client.vendors('ACME, "exact" PLA', limit=10)
+    await client.filaments(limit=500)
+
+    assert vendor_route.calls[0].request.url.params["name"] == "ACME  exact PLA"
+    assert vendor_route.calls[0].request.url.params["limit"] == "10"
+    # limit wird auf MAX_LIST_LIMIT gedeckelt, auch wenn ein groesserer Wert
+    # angefragt wird (grosse Filament-Datenbank, siehe Sicherheitsanalyse).
+    assert filament_route.calls[0].request.url.params["limit"] == "200"
+
+
+@respx.mock
+async def test_search_spools_ohne_query_listet_unarchivierte_spulen() -> None:
+    route = respx.get("http://spoolman:8000/api/v1/spool").mock(
+        return_value=httpx.Response(200, json=[{"id": 1}, {"id": 2}])
+    )
+
+    results = await SpoolmanClient(Settings()).search_spools()
+
+    assert [record.id for record in results] == [1, 2]
+    assert "filament.name" not in route.calls[0].request.url.params
+    assert route.calls[0].request.url.params["sort"] == "filament.vendor.name:asc,filament.name:asc"
+
+
+@respx.mock
+async def test_search_spools_mit_query_dedupliziert_treffer() -> None:
+    respx.get(
+        "http://spoolman:8000/api/v1/spool", params={"filament.name": "PLA", "limit": "50"}
+    ).mock(return_value=httpx.Response(200, json=[{"id": 1}, {"id": 2}]))
+    respx.get(
+        "http://spoolman:8000/api/v1/spool", params={"filament.vendor.name": "PLA", "limit": "50"}
+    ).mock(return_value=httpx.Response(200, json=[{"id": 2}, {"id": 3}]))
+
+    results = await SpoolmanClient(Settings()).search_spools("PLA")
+
+    assert sorted(record.id for record in results) == [1, 2, 3]
+
+
+@respx.mock
 async def test_print_presets_lehnt_ungueltiges_format_ab() -> None:
     respx.get("http://spoolman:8000/api/v1/setting/print_presets").mock(
         return_value=httpx.Response(200, json={"value": "keine-json-liste"})

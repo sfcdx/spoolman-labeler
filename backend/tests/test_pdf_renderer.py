@@ -5,17 +5,19 @@ from __future__ import annotations
 import base64
 from unittest.mock import patch
 
+import pytest
 import segno
 from weasyprint.urls import URLFetchingError
 
 from app.core.config import Settings
+from app.core.errors import AppError
 from app.services.rendering import LabelRenderer
 
 
-def test_renderer_erzeugt_pdf_und_escaped_werte(settings: Settings) -> None:
+async def test_renderer_erzeugt_pdf_und_escaped_werte(settings: Settings) -> None:
     renderer = LabelRenderer(settings)
 
-    rendered = renderer.render_pdf(
+    rendered = await renderer.render_pdf(
         html_content='<p>{{ spool.name }}</p><img src="{{ qr }}">',
         css_content="p { font-size: 3mm; }",
         width_mm=62,
@@ -24,6 +26,23 @@ def test_renderer_erzeugt_pdf_und_escaped_werte(settings: Settings) -> None:
     )
 
     assert rendered.startswith(b"%PDF")
+
+
+async def test_renderer_bricht_bei_zeitueberschreitung_ab(settings: Settings) -> None:
+    """ADR-014 verspricht eine harte Zeitbegrenzung — hier verifiziert."""
+    slow_settings = settings.model_copy(update={"render_timeout_seconds": 0.001})
+    renderer = LabelRenderer(slow_settings)
+
+    with pytest.raises(AppError) as raised:
+        await renderer.render_pdf(
+            html_content="<p>{{ spool.name }}</p>",
+            css_content="",
+            width_mm=62,
+            height_mm=29,
+            context={"spool": {"name": "PLA"}},
+        )
+
+    assert raised.value.code.value == "TEMPLATE_RENDER_FAILED"
 
 
 def test_renderer_blockiert_externe_ressourcen(settings: Settings) -> None:

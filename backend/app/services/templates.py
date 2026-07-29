@@ -112,6 +112,22 @@ async def get_template(session: AsyncSession, template_id: int) -> Template:
     return template
 
 
+async def get_default_template(session: AsyncSession) -> Template:
+    """Loest die Vorlage auf, die ohne explizite Auswahl verwendet wird.
+
+    Bevorzugt die als Standard markierte Vorlage; ohne eine solche die erste
+    verfuegbare (nach Name sortiert) — die mitgelieferte Standardvorlage
+    existiert immer (siehe ``ensure_default_template``), daher kann diese
+    Funktion praktisch nie ins Leere laufen.
+    """
+    template = await session.scalar(select(Template).where(Template.is_default.is_(True)))
+    if template is None:
+        template = await session.scalar(select(Template).order_by(Template.name))
+    if template is None:
+        raise AppError(ErrorCode.TEMPLATE_NOT_FOUND, detail="Keine Vorlage vorhanden")
+    return template
+
+
 async def _clear_other_defaults(session: AsyncSession, exclude_id: int | None) -> None:
     others = await session.scalars(select(Template).where(Template.is_default.is_(True)))
     for other in others:

@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.core.errors import AppError, ErrorCode
 from app.models.enums import PrintJobStatus, WorkflowStatus
-from app.schemas.printer import PrinterCreate
+from app.schemas.printer import PrinterCreate, PrinterUpdate
 from app.schemas.template import TemplateCreate
 from app.services import printers as printers_service
 from app.services import templates as templates_service
@@ -158,6 +158,33 @@ async def test_lauf_ist_idempotent(session: AsyncSession, settings: Settings) ->
 
     assert second.id == first.id
     assert client.create_spool.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_ohne_vorlage_und_drucker_werden_die_standards_verwendet(
+    session: AsyncSession, settings: Settings
+) -> None:
+    printer_id, _template_id = await _printer_and_template(session)
+    await printers_service.update_printer(session, printer_id, PrinterUpdate(is_default=True))
+    client = AsyncMock()
+    client.create_spool.side_effect = [
+        SpoolmanRecord(id=501, filament={"material": "PLA", "color_hex": "1E88E5"})
+    ]
+    request = CreateAndPrintRequest(
+        idempotency_key="cap-0007",
+        filament_id=4,
+        spool=SpoolFields(),
+        quantity=1,
+    )
+
+    with patch(
+        "app.services.workflows.create_and_print.submit_print_job",
+        new=AsyncMock(return_value=SubmittedJob(cups_job_id=5, rendered_file_path="/data/w.pdf")),
+    ):
+        run = await CreateAndPrintService(session, client, settings).run(request)
+
+    assert run.status is WorkflowStatus.COMPLETED
+    assert run.created_spool_ids_json == "[501]"
 
 
 @pytest.mark.asyncio

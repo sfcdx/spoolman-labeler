@@ -23,6 +23,30 @@ async def get_printer(session: AsyncSession, printer_id: int) -> Printer:
     return printer
 
 
+async def get_default_printer(session: AsyncSession) -> Printer:
+    """Loest den Drucker auf, der ohne explizite Auswahl verwendet wird.
+
+    Bevorzugt den als Standard markierten, aktivierten Drucker; ohne einen
+    solchen den ersten aktivierten Drucker (nach Name sortiert). Ermoeglicht
+    einen verkuerzten Workflow ('viel presetten -> kuerzere Workflows'), bei
+    dem Drucker/Vorlage nicht bei jedem Druck erneut ausgewaehlt werden
+    muessen.
+    """
+    printer = await session.scalar(
+        select(Printer).where(Printer.is_default.is_(True), Printer.is_enabled.is_(True))
+    )
+    if printer is None:
+        printer = await session.scalar(
+            select(Printer).where(Printer.is_enabled.is_(True)).order_by(Printer.name)
+        )
+    if printer is None:
+        raise AppError(
+            ErrorCode.PRINTER_NOT_FOUND,
+            detail="Kein aktivierter Drucker vorhanden — bitte in den Einstellungen anlegen",
+        )
+    return printer
+
+
 async def _clear_other_defaults(session: AsyncSession, exclude_id: int | None) -> None:
     others = await session.scalars(select(Printer).where(Printer.is_default.is_(True)))
     for other in others:

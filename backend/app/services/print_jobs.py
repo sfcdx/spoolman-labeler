@@ -68,7 +68,7 @@ async def retry_print_job(
     try:
         record = await client.get_spool(job.spoolman_spool_id)
         context = build_label_context(record.model_dump(), renderer.qr_data_uri(record.id))
-        pdf_bytes = renderer.render_pdf(
+        pdf_bytes = await renderer.render_pdf(
             html_content=template.html_content,
             css_content=template.css_content,
             width_mm=template.width_mm,

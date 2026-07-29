@@ -55,6 +55,23 @@ class SpoolmanRecord(BaseModel):
     id: int
 
 
+#: Spoolmans Filter-DSL fuer Textfelder (siehe docs/spoolman-api-analysis.md,
+#: Abschnitt 4.3): Komma trennt mehrere ODER-verknuepfte Teilstrings, ein in
+#: doppelte Anfuehrungszeichen gesetzter Teil erzwingt exakten statt
+#: Teilstring-Vergleich. Freitext aus einem Suchfeld soll immer als ein
+#: einziger Teilstring gesucht werden — beide Zeichen werden deshalb entfernt.
+def _sanitize_text_filter(value: str) -> str:
+    return value.replace(",", " ").replace('"', "").strip()
+
+
+#: Standard- und Maximalwert fuer ``limit`` bei Listen-/Suchanfragen — ohne
+#: Begrenzung koennte eine Spoolman-Instanz mit einer sehr grossen
+#: Filament-Datenbank (mehrere hundert Eintraege durch die externe
+#: Hersteller-Datenbank) eine unbegrenzt grosse Antwort liefern.
+DEFAULT_LIST_LIMIT = 50
+MAX_LIST_LIMIT = 200
+
+
 class SpoolmanClient:
     def __init__(self, settings: Settings) -> None:
         self.base_url = settings.spoolman_api_base
@@ -100,20 +117,65 @@ class SpoolmanClient:
             payload["extra"] = {key: json.dumps(value) for key, value in payload["extra"].items()}
         return payload
 
-    async def vendors(self, name: str | None = None) -> list[SpoolmanRecord]:
+    async def vendors(
+        self, name: str | None = None, limit: int = DEFAULT_LIST_LIMIT
+    ) -> list[SpoolmanRecord]:
+        params: dict[str, Any] = {"limit": min(limit, MAX_LIST_LIMIT)}
+        if name:
+            params["name"] = _sanitize_text_filter(name)
         return [
             SpoolmanRecord.model_validate(item)
-            for item in await self._request(
-                "GET", "/vendor", params={"name": name} if name else None
-            )
+            for item in await self._request("GET", "/vendor", params=params)
         ]
 
-    async def filaments(self, name: str | None = None) -> list[SpoolmanRecord]:
+    async def filaments(
+        self, name: str | None = None, limit: int = DEFAULT_LIST_LIMIT
+    ) -> list[SpoolmanRecord]:
+        params: dict[str, Any] = {"limit": min(limit, MAX_LIST_LIMIT)}
+        if name:
+            params["name"] = _sanitize_text_filter(name)
         return [
             SpoolmanRecord.model_validate(item)
-            for item in await self._request(
-                "GET", "/filament", params={"name": name} if name else None
+            for item in await self._request("GET", "/filament", params=params)
+        ]
+
+    async def search_spools(
+        self, query: str | None = None, limit: int = DEFAULT_LIST_LIMIT
+    ) -> list[SpoolmanRecord]:
+        """Sucht bestehende (nicht archivierte) Spulen fuer den Direktdruck-Pfad.
+
+        Spoolmans Query-Parameter sind untereinander UND-verknuepft — eine
+        einzelne Anfrage kann also nicht „Filamentname ODER Herstellername
+        enthaelt X" ausdruecken. Bei einer Freitextsuche werden deshalb zwei
+        Anfragen (Filamentname, Herstellername) gestellt und deren Treffer
+        anhand der Spulen-ID dedupliziert.
+        """
+        capped_limit = min(limit, MAX_LIST_LIMIT)
+        if not query:
+            items = await self._request(
+                "GET",
+                "/spool",
+                params={
+                    "limit": capped_limit,
+                    "sort": "filament.vendor.name:asc,filament.name:asc",
+                },
             )
+            return [SpoolmanRecord.model_validate(item) for item in items]
+
+        sanitized = _sanitize_text_filter(query)
+        by_filament, by_vendor = (
+            await self._request(
+                "GET", "/spool", params={"limit": capped_limit, "filament.name": sanitized}
+            ),
+            await self._request(
+                "GET", "/spool", params={"limit": capped_limit, "filament.vendor.name": sanitized}
+            ),
+        )
+        merged: dict[int, dict[str, Any]] = {}
+        for item in [*by_filament, *by_vendor]:
+            merged[item["id"]] = item
+        return [
+            SpoolmanRecord.model_validate(item) for item in list(merged.values())[:capped_limit]
         ]
 
     async def print_presets(self) -> list[dict[str, Any]]:

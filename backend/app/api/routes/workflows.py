@@ -14,12 +14,15 @@ from app.core.config import Settings
 from app.core.errors import AppError
 from app.db.session import get_session
 from app.models.workflow_run import WorkflowRun
+from app.schemas.print_job import PrintJobRead
 from app.services.spoolman import SpoolmanClient
 from app.services.workflows import (
     CreateAndPrintRequest,
     CreateAndPrintService,
     CreateOnlyRequest,
     CreateOnlyService,
+    PrintExistingRequest,
+    PrintExistingService,
 )
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
@@ -82,6 +85,28 @@ async def create_and_print(
     elif run.status.value == "partial":
         response.status_code = 207
     return _serialize(run)
+
+
+@router.post("/print-existing", response_model=PrintJobRead)
+async def print_existing(
+    response: Response,
+    request: PrintExistingRequest,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_effective_settings),
+    client: SpoolmanClient = Depends(get_client),
+) -> PrintJobRead:
+    """Druckt eine bereits in Spoolman vorhandene Spule, ohne etwas anzulegen.
+
+    Zweiter Einstiegspunkt neben ``create-and-print``: 'vorhandene Spule
+    Etikett drucken'.
+    """
+    try:
+        job = await PrintExistingService(session, client, settings).run(request)
+    except AppError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.user_message) from error
+    if job.status.value == "failed":
+        response.status_code = 502
+    return PrintJobRead.model_validate(job)
 
 
 @router.get("/{workflow_id}")
