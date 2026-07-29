@@ -551,14 +551,32 @@ Hardware verifiziert werden:
    sondern auch auf realen Zielservern ohne USB-Controller. Siehe ADR-007,
    Nachtrag.
 2. **PPD-Name des Brother QL-800** — der Wert in den Einrichtungsbeispielen ist
-   bislang eine Annahme und muss am Gerät geprüft werden.
+   bislang eine Annahme und muss am Gerät geprüft werden. Am tatsächlich
+   produktiv eingesetzten Gerät (Phomemo M110S, siehe Punkt 8) wurde
+   stattdessen `Phomemo/Phomemo-M110.ppd.gz` aus `vivier/phomemo-tools`
+   verifiziert — der QL-800-Wert bleibt für dieses konkrete Gerät offen.
 3. **Ob `printer-driver-all` tatsächlich `printer-driver-ptouch` mitzieht** —
-   falls nein, ist das sofort das Argument für das eigene CUPS-Image.
+   falls nein, ist das sofort das Argument für das eigene CUPS-Image. Für den
+   Phomemo M110S hat sich das eigene CUPS-Image bereits als notwendig
+   erwiesen (kein mitgelieferter Treiber, siehe Punkt 8).
 4. **Die OpenAPI-Spezifikation von Spoolman** konnte nicht abgerufen werden.
    Die gesamte API-Analyse stammt aus dem Quellcode des `master`-Branch. Vor
    dem Release sollte sie gegen eine laufende Instanz geprüft werden.
 5. **Sortiersyntax für Extra-Felder** in der Spoolman-API ist ungetestet.
-6. **Bundle-Größe von Ant Design** wurde nicht gemessen.
-7. **Proxy-Isolation der Spoolman-Verbindung** ist im Healthcheck umgesetzt
-   und durch Tests abgesichert. Der getypte Spoolman-Client der naechsten Phase
-   muss dieselbe Regel (`trust_env=False`) uebernehmen.
+6. ~~Bundle-Größe von Ant Design wurde nicht gemessen.~~ — **gemessen:**
+   ca. 394 kB gzip in einem einzelnen Chunk (Stand 29. Juli 2026, nach
+   Hauptworkflow/Vorlagen/Drucker/Historie-UI). Bundle-Splitting ist als
+   offener Punkt in `docs/status.md` dokumentiert, aber noch nicht umgesetzt.
+7. **Proxy-Isolation der Spoolman-Verbindung** ist im Healthcheck **und** im
+   getypten `SpoolmanClient` umgesetzt (`trust_env=False` an beiden Stellen)
+   und durch Tests abgesichert.
+8. **Phomemo-M110S-Produktionssetup nicht im Repository nachgeführt.** Beim
+   Funktionsaudit auf dem Produktivsystem (29. Juli 2026) wurde ein
+   Custom-CUPS-Image mit Treiber aus `vivier/phomemo-tools`
+   (Commit `d0522f058df7915674640b71aa6256d96bde4fd6`, GPL-3.0),
+   USB-Passthrough und eine eingerichtete CUPS-Queue produktiv verifiziert —
+   aber ausschließlich lokal auf dem Zielsystem, nicht als Repository-Artefakt.
+   Details und der empfohlene Nachführungsweg (gepinnter Vendor-Snapshot,
+   `docker/cups/Dockerfile.phomemo`, Compose-Overlay, idempotentes
+   Init-Skript, CI-Regressionstest) stehen in `docs/status.md`, Abschnitt
+   „Weiterhin offen".

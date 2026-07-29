@@ -1,6 +1,73 @@
 # Projektstatus
 
-**Letzte Aktualisierung:** 28. Juli 2026
+**Letzte Aktualisierung:** 29. Juli 2026
+
+## Hauptworkflow vollständig funktionsfähig (29. Juli 2026)
+
+Nach der Produktivinstallation neben Spoolman (siehe Installationsprotokoll
+im Castrum Vault) zeigte ein Funktionsaudit: Die Infrastruktur lief, aber
+der eigentliche Zweck des Tools — Filament/Spule auswählen oder anlegen,
+Vorlage wählen, drucken — war im Backend nur als Skelett und im Frontend nur
+als Platzhalter vorhanden. Das ist jetzt nachgeholt:
+
+**Neu, Backend:**
+- CUPS-Druckübermittlung (`app/services/printing/cups_client.py`):
+  `submit_print_job`/`get_job_status` über `pycups` in einem Worker-Thread,
+  mit strenger Warteschlangennamen-Validierung (Verteidigung in der Tiefe,
+  auch wenn der Name bereits beim Anlegen des Druckers geprüft wurde).
+- Drucker- und Vorlagen-CRUD-APIs (`/api/printers`, `/api/templates`) inkl.
+  Default-Flag-Exklusivität, Vorlagen-Duplizierung, Spoolman-Preset-Import
+  und PDF-Vorschau (sowohl für gespeicherte als auch für noch nicht
+  gespeicherte Vorlagen).
+- Eine mitgelieferte Standardvorlage (62×29 mm) wird beim Anwendungsstart
+  automatisch angelegt (`ensure_default_template`), damit der Workflow ohne
+  manuelle Ersteinrichtung nutzbar ist.
+- `POST /api/workflows/create-and-print`: legt Spulen an und druckt im
+  selben Vorgang je ein Etikett. Ein Druckfehler macht die bereits erfolgte
+  Spoolman-Anlage **niemals** rückgängig — der Lauf endet als `partial`
+  (ADR-012). Mutationsgetestet: eine absichtlich eingebaute Rollback-Logik
+  ließ den entsprechenden Test fehlschlagen.
+- Druckhistorie (`GET /api/print-jobs`) mit Retry-Endpunkt, der die Spule
+  frisch aus Spoolman lädt statt veraltete Werte erneut zu drucken.
+- `SpoolmanClient.get_spool` ergänzt; zwei neue Fehlercodes
+  (`PRINT_JOB_NOT_FOUND`, `PRINT_JOB_NOT_RETRYABLE`) statt einer
+  Zweckentfremdung von `VALIDATION_FAILED`.
+- Keine Schemaänderung nötig — die Tabellen `printers`/`templates`/
+  `print_jobs` existierten bereits in der Grundschema-Migration, waren nur
+  unangebunden.
+
+**Neu, Frontend:**
+- `NewSpoolPage`: vierstufiger Workflow (Filament, Spule, Etikett, Drucken)
+  gegen `create-and-print`. Zeigt `completed`/`partial`/`failed` sichtbar
+  unterschiedlich; bei `partial` bleibt die angelegte Spule sichtbar mit
+  Verweis auf die Druckhistorie.
+- `TemplatesPage`: CRUD, Duplizieren, Spoolman-Preset-Import, PDF-Vorschau.
+  Eingebaute Vorlagen sind vor Änderung/Löschung geschützt.
+- `SettingsPage`: Drucker-CRUD inkl. Standard-Flag und Testverbindung.
+- `PrintHistoryPage`: echte Daten mit Statusfilter und Retry für
+  fehlgeschlagene/abgebrochene Aufträge.
+- Neue API-Client-Module (`printers`, `templates`, `workflows`, `printJobs`,
+  `spoolman`). `createAndPrint()` liest den Antwort-Body bewusst unabhängig
+  vom HTTP-Status (200/207/502), weil der generische `request()`-Wrapper bei
+  Nicht-2xx-Antworten sonst `created_spool_ids` verwerfen würde — und genau
+  das ist die Information, die eine bereits angelegte, aber nicht gedruckte
+  Spule sichtbar macht.
+
+**Ergebnis:** 92 Backend-Tests (vorher 49), 47 Frontend-Tests (vorher 37),
+Ruff, mypy --strict, ESLint, Prettier, `tsc --noEmit` und der
+Produktionsbuild sind grün.
+
+**Bewusst nicht in diesem Schritt umgesetzt:**
+- Das bei der Produktivinstallation von Hermes dokumentierte
+  Phomemo-M110S-Setup (Custom-CUPS-Image mit Treiber, USB-Passthrough,
+  Queue-Init-Skript) ist weiterhin **nicht** im Repository nachgeführt —
+  siehe „Weiterhin offen" unten. Es lief bislang nur lokal auf dem
+  Produktivsystem und würde einen künftigen `git pull`/Rebuild ohne
+  erneute manuelle Einrichtung nicht überstehen.
+- Auflisten/Auswählen **bestehender** Spools (Wiederholungsdruck ohne
+  Neuanlage) ist weiterhin nicht umgesetzt — der aktuelle Workflow legt
+  immer eine neue Spule an. War nicht Teil des expliziten Auftrags
+  („Filament/Spule auswählen oder anlegen, Vorlage wählen, drucken").
 
 ## Vollständiger Review vor Produktionseinsatz (28. Juli 2026)
 
@@ -76,13 +143,13 @@ Frontend-Build — alle grün.
 
 | Prüfung | Ergebnis |
 | --- | --- |
-| Backend-Tests | 49 bestanden |
+| Backend-Tests | 92 bestanden |
 | Backend-Linting (Ruff) | bestanden |
 | Backend-Typprüfung (mypy --strict) | bestanden |
-| Frontend-Tests | 37 bestanden |
+| Frontend-Tests | 47 bestanden |
 | Frontend-Linting (ESLint) | bestanden |
 | Frontend-Produktionsbuild | bestanden |
-| **Docker Build und Boot-Test (GitHub Actions)** | **bestanden** — run [30398489617](https://github.com/sfcdx/spoolman-labeler/actions/runs/30398489617) |
+| **Docker Build und Boot-Test (GitHub Actions)** | **bestanden** — run [30414032783](https://github.com/sfcdx/spoolman-labeler/actions/runs/30414032783) (Commit `84adb6f`, Hauptworkflow/Vorlagen/Drucker/Historie) |
 
 Der Docker-Realtest umfasst: `docker compose build`, vollständiger
 Stack-Start mit `up -d --wait` (Spoolman + Labeler + CUPS-Sidecar, alle
@@ -107,23 +174,36 @@ Push wiederholbar, nicht nur einmalig von Hand geprüft.
 
 ## Nächste Schritte
 
-1. `fix/docker-first-build` nach `develop` mergen (dieser Branch enthält
-   `develop` vollständig, Fast-Forward möglich), danach nach `main` — beides
-   erst, nachdem CI für den jeweiligen Zielstand grün ist.
-2. Template- und Druckerprofile als CRUD-API und UI anbinden.
-3. CUPS-Backend: `pycups` in `anyio.to_thread.run_sync`, Queue-Validierung,
-   PDF-Übermittlung, IPP-Statusabfrage, `PrintJob`- und Fehlerhistorie.
-4. Create-and-print-Workflow: erst Spoolman anlegen, dann PDF und CUPS-Druck.
-   Ein Druckfehler darf die bereits angelegten Spulen niemals zurückrollen
-   oder erneut anlegen — der Lauf wird `partial`.
-5. Frontend: Hauptworkflow, Einstellungen, Vorlagen-/Druckerpflege,
-   Druckhistorie mit Fehler- und Partial-Zuständen.
-6. PPD-Name des Brother QL-800 an echter Hardware verifizieren
-   (`docs/architecture.md`, Abschnitt 9, Punkt 2).
+1. Phomemo-M110S-Setup ins Repository nachführen (siehe „Weiterhin offen"):
+   `docker/cups/Dockerfile.phomemo`, Compose-Overlay, gepinnter
+   Treiber-Vendor-Snapshot mit Lizenztext, idempotentes Queue-Init-Skript,
+   CI-Regressionstest. Ohne das überlebt die auf dem Produktivsystem bereits
+   eingerichtete Druckfunktion keinen künftigen `git pull`/Image-Rebuild.
+2. Bestehende Spools aus Spoolman auflisten und auswählen (Wiederholungsdruck
+   ohne Neuanlage) — aktuell legt der Workflow immer eine neue Spule an.
+3. PPD-Name realer Etikettendrucker an Hardware verifizieren, sobald mehr
+   Modelle im Einsatz sind (bisher nur Phomemo M110S produktiv getestet,
+   siehe Castrum-Vault-Installationsprotokoll).
 
 ## Weiterhin offen
 
+- **Phomemo-M110S-Produktionssetup nicht im Repository getrackt.** Beim
+  Funktionsaudit auf dem Produktivsystem (Castrum-Vault-Installations-
+  protokoll, Nachtrag „Git-/Docker-Upgrade-Vertrag") wurde festgestellt, dass
+  Treiber (`vivier/phomemo-tools`, Commit `d0522f058df7915674640b71aa6256d9
+  6bde4fd6`, GPL-3.0), Custom-CUPS-Image, USB-Passthrough-Overlay und die
+  angelegte CUPS-Queue ausschließlich lokal auf dem LXC existieren. Ein
+  ungesicherter `git pull`/Compose-Rebuild auf diesem System würde die
+  Druckfunktion ohne Vorwarnung wieder deaktivieren. Empfohlener,
+  noch nicht umgesetzter Weg: gepinnter Vendor-Snapshot (Lizenztext +
+  Prüfsumme) statt Live-Fetch, `docker/cups/Dockerfile.phomemo`,
+  `docker-compose.phomemo.yml`-Overlay, `scripts/ensure-phomemo-m110s.sh`
+  als idempotentes Init-Skript, CI-Regressionstest fürs Custom-Image. Bis
+  dahin: vor jedem Upgrade auf diesem System das dokumentierte Runbook aus
+  dem Castrum Vault befolgen, niemals `docker compose down -v` oder
+  `git reset --hard`/`git clean -fd` im Produktiv-Checkout ausführen.
+- Auswahl bestehender Spoolman-Spulen (Wiederholungsdruck ohne Neuanlage).
 - Branch Protection für `main` und `develop` (Pull Request erforderlich, CI
   muss grün sein) — braucht Zugriff auf die Repository-Einstellungen.
 - GHCR-Veröffentlichung bei einem Versions-Tag.
-- Bundle-Splitting im Frontend (aktuell ein Chunk, 368 kB gzip).
+- Bundle-Splitting im Frontend (aktuell ein Chunk, ca. 394 kB gzip).

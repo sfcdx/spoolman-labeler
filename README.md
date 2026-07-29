@@ -18,22 +18,29 @@ ohne Browser-Druckdialog.
 > ### Projektstatus
 >
 > **Dieses Projekt befindet sich in aktiver Entwicklung und hat noch kein
-> erstes Release.** Was bereits funktioniert und durch automatisierte Tests
-> **und** einen echten Docker-Build-und-Start-Lauf verifiziert ist:
+> erstes Release.** Der Hauptworkflow ist durchgängig funktionsfähig und
+> durch automatisierte Tests **und** einen echten Docker-Build-und-Start-Lauf
+> verifiziert:
 >
 > - Der Compose-Stack baut und startet zuverlässig (Spoolman + Labeler +
 >   CUPS-Sidecar), alle Healthchecks werden gesund.
-> - Filamente, Hersteller und Spulen lassen sich über die Spoolman-API anlegen
->   (`POST /api/workflows/create-only`), inklusive Idempotenz und mehrerer
->   identischer Spulen in einem Durchgang.
+> - Filament wählen oder neu anlegen, Spulendaten erfassen (auch mehrere
+>   identische Spulen auf einmal), Vorlage und Drucker wählen, anlegen und
+>   drucken — als ein durchgängiger Workflow
+>   (`POST /api/workflows/create-and-print`) mit eigener Oberfläche.
+>   Ein Druckfehler macht die bereits in Spoolman angelegte Spule nie
+>   rückgängig; der Lauf wird als „teilweise erfolgreich" markiert und kann
+>   in der Druckhistorie erneut gedruckt werden.
+> - Vorlagenverwaltung (anlegen, bearbeiten, duplizieren, aus Spoolman-Presets
+>   importieren, PDF-Vorschau) und Druckerverwaltung (CRUD, Testverbindung)
+>   haben eine vollständige Oberfläche.
 > - Etiketten werden serverseitig als PDF gerendert (physische mm-Maße,
 >   QR-Code im Spoolman-kompatiblen Format), sandboxed ohne Netzwerkzugriff.
 >
-> **Was noch fehlt:** Die eigentliche CUPS-Druckanbindung (Warteschlange,
-> Übermittlung, Statusabfrage) sowie die Weboberfläche für den Hauptworkflow,
-> Einstellungen, Vorlagenverwaltung und Druckhistorie sind Platzhalter. Es
-> gibt derzeit **kein veröffentlichtes Container-Image** — der Stack wird aus
-> dem Quelltext gebaut (`docker compose up -d --build`).
+> **Was noch fehlt:** Bestehende Spoolman-Spulen lassen sich noch nicht zum
+> erneuten Etikettieren auswählen — der Workflow legt immer eine neue Spule
+> an. Es gibt derzeit **kein veröffentlichtes Container-Image** — der Stack
+> wird aus dem Quelltext gebaut (`docker compose up -d --build`).
 >
 > Den vollständigen, laufend aktualisierten Stand findest du in
 > [`docs/status.md`](docs/status.md).
