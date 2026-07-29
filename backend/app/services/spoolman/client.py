@@ -160,6 +160,17 @@ class SpoolmanClient:
             )
         )
 
+    async def get_spool(self, spool_id: int) -> SpoolmanRecord:
+        """Laedt eine Spule mit vollstaendig verschachteltem Filament/Hersteller.
+
+        Wird fuer den erneuten Druck gebraucht: Der Etiketteninhalt soll den
+        aktuellen Stand zeigen, nicht die Werte zum Zeitpunkt des ersten
+        Drucks (siehe ``retry_print_job`` in ``app/services/print_jobs.py``).
+        """
+        return SpoolmanRecord.model_validate(
+            await self._request("GET", f"/spool/{spool_id}", error=ErrorCode.SPOOL_FETCH_FAILED)
+        )
+
     async def create_spool(self, value: SpoolCreate) -> SpoolmanRecord:
         return SpoolmanRecord.model_validate(
             await self._request(

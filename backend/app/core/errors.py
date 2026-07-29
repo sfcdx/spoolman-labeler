@@ -36,6 +36,8 @@ class ErrorCode(StrEnum):
     PRINT_SUBMISSION_FAILED = "PRINT_SUBMISSION_FAILED"
     PRINT_STATUS_UNKNOWN = "PRINT_STATUS_UNKNOWN"
     PRINT_CANCEL_FAILED = "PRINT_CANCEL_FAILED"
+    PRINT_JOB_NOT_FOUND = "PRINT_JOB_NOT_FOUND"
+    PRINT_JOB_NOT_RETRYABLE = "PRINT_JOB_NOT_RETRYABLE"
 
     # -- Allgemein ---------------------------------------------------------
     DATABASE_ERROR = "DATABASE_ERROR"
@@ -68,6 +70,10 @@ USER_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.PRINT_SUBMISSION_FAILED: "Der Druckauftrag konnte nicht übermittelt werden.",
     ErrorCode.PRINT_STATUS_UNKNOWN: "Der Status des Druckauftrags ist unbekannt.",
     ErrorCode.PRINT_CANCEL_FAILED: "Der Druckauftrag konnte nicht abgebrochen werden.",
+    ErrorCode.PRINT_JOB_NOT_FOUND: "Der Druckauftrag wurde nicht gefunden.",
+    ErrorCode.PRINT_JOB_NOT_RETRYABLE: (
+        "Nur fehlgeschlagene oder abgebrochene Druckaufträge können erneut gedruckt werden."
+    ),
     ErrorCode.DATABASE_ERROR: "Es ist ein Datenbankfehler aufgetreten.",
     ErrorCode.CONFIGURATION_ERROR: "Die Konfiguration ist unvollständig oder fehlerhaft.",
     ErrorCode.IDEMPOTENCY_CONFLICT: (
@@ -96,6 +102,8 @@ _HTTP_STATUS: dict[ErrorCode, int] = {
     ErrorCode.PRINT_SUBMISSION_FAILED: 502,
     ErrorCode.PRINT_STATUS_UNKNOWN: 200,
     ErrorCode.PRINT_CANCEL_FAILED: 502,
+    ErrorCode.PRINT_JOB_NOT_FOUND: 404,
+    ErrorCode.PRINT_JOB_NOT_RETRYABLE: 409,
     ErrorCode.DATABASE_ERROR: 500,
     ErrorCode.CONFIGURATION_ERROR: 500,
     ErrorCode.IDEMPOTENCY_CONFLICT: 409,

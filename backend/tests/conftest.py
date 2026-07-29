@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.core.config import Settings, get_settings
 from app.db.base import Base
 from app.db.session import get_session
+from app.services.templates import ensure_default_template
 
 
 @pytest.fixture(autouse=True)
@@ -50,6 +51,10 @@ async def session() -> AsyncIterator[AsyncSession]:
 
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with factory() as active_session:
+        # Spiegelt das Anwendungsverhalten beim Start (siehe app/main.py):
+        # die mitgelieferte Standardvorlage existiert immer.
+        await ensure_default_template(active_session)
+        await active_session.commit()
         yield active_session
 
     await engine.dispose()

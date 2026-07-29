@@ -19,7 +19,8 @@ from app.api.router import api_router
 from app.core.config import Settings, get_settings
 from app.core.errors import USER_MESSAGES, AppError, ErrorCode
 from app.core.logging import configure_logging, get_logger
-from app.db.session import dispose_engine, init_engine
+from app.db.session import dispose_engine, get_session_factory, init_engine
+from app.services.templates import ensure_default_template
 
 logger = get_logger(__name__)
 
@@ -32,6 +33,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     settings.ensure_directories()
     init_engine(settings)
+
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        await ensure_default_template(session)
+        await session.commit()
 
     logger.info(
         "application_started",
