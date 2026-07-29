@@ -205,9 +205,7 @@ async def discover_queues(*, settings: Settings) -> list[DiscoveredQueue]:
         with anyio.fail_after(settings.cups_timeout_seconds):
             return await anyio.to_thread.run_sync(_discover, settings)
     except TimeoutError as exc:
-        raise AppError(
-            ErrorCode.CUPS_UNREACHABLE, detail="Zeitüberschreitung beim Suchen"
-        ) from exc
+        raise AppError(ErrorCode.CUPS_UNREACHABLE, detail="Zeitüberschreitung beim Suchen") from exc
 
 
 def _probe_queue(printer: Printer, settings: Settings) -> tuple[ComponentStatus, str | None]:
