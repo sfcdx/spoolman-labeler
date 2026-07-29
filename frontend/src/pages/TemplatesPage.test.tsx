@@ -80,6 +80,43 @@ describe("TemplatesPage", () => {
     await screen.findByText("Eigene Vorlage");
   });
 
+  it("setzt is_default beim Anlegen ueber den Schalter", async () => {
+    let created = false;
+    let payload: Record<string, unknown> | undefined;
+    const user = setupUser();
+    stubRoutedFetch([
+      [
+        /\/api\/templates$/,
+        (_url, init) => {
+          if (init?.method === "POST") {
+            created = true;
+            payload = JSON.parse(init.body as string) as Record<string, unknown>;
+            return jsonResponse(
+              { ...BUILTIN_TEMPLATE, id: 2, name: "Eigene Vorlage", is_builtin: false },
+              201,
+            );
+          }
+          return jsonResponse(created ? [BUILTIN_TEMPLATE] : [BUILTIN_TEMPLATE]);
+        },
+      ],
+    ]);
+
+    renderWithProviders(<TemplatesPage />);
+    await screen.findByText(BUILTIN_TEMPLATE.name);
+
+    await user.click(screen.getByRole("button", { name: page.create }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByPlaceholderText(page.fields.name), "Eigene Vorlage");
+    await user.type(within(dialog).getByPlaceholderText(page.fields.html), "<p>x</p>");
+    await user.click(within(dialog).getByRole("switch"));
+    await user.click(within(dialog).getByRole("button", { name: page.actions.save }));
+
+    await waitFor(() => {
+      expect(created).toBe(true);
+    });
+    expect(payload?.is_default).toBe(true);
+  });
+
   it("stapelt Listeneintraege auf dem Handy statt sie nebeneinander zu zeigen", async () => {
     matchMediaController.setMobile(true);
     stubRoutedFetch([[/\/api\/templates$/, () => jsonResponse([BUILTIN_TEMPLATE])]]);

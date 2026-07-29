@@ -155,6 +155,61 @@ async def submit_print_job(
     return SubmittedJob(cups_job_id=job_id, rendered_file_path=str(file_path))
 
 
+@dataclass(frozen=True)
+class DiscoveredQueue:
+    queue_name: str
+    model: str | None
+    location: str | None
+    supported: bool
+
+
+def _discover(settings: Settings) -> list[DiscoveredQueue]:
+    if not CUPS_AVAILABLE or cups is None:
+        raise AppError(ErrorCode.CUPS_UNREACHABLE, detail="pycups ist nicht verfügbar")
+
+    os.environ["CUPS_SERVER"] = settings.cups_server
+    os.environ["IPP_PORT"] = str(settings.cups_port)
+    if settings.cups_username:
+        cups.setUser(settings.cups_username)
+
+    try:
+        connection = cups.Connection()
+        raw = connection.getPrinters()
+    except Exception as exc:
+        logger.warning("cups_discover_failed", extra={"error": type(exc).__name__})
+        raise AppError(ErrorCode.CUPS_UNREACHABLE) from exc
+
+    queues: list[DiscoveredQueue] = []
+    for name, attrs in raw.items():
+        queues.append(
+            DiscoveredQueue(
+                queue_name=name,
+                model=attrs.get("printer-make-and-model") or None,
+                location=attrs.get("printer-location") or None,
+                supported=_QUEUE_NAME_RE.fullmatch(name) is not None,
+            )
+        )
+    return queues
+
+
+async def discover_queues(*, settings: Settings) -> list[DiscoveredQueue]:
+    """Fragt alle auf dem konfigurierten Server bekannten Warteschlangen ab.
+
+    Anders als :func:`probe_printer` betrifft dies keinen konkret angelegten
+    Drucker, sondern dient dazu, bereits extern (z. B. per ``lpadmin``)
+    eingerichtete Warteschlangen ueberhaupt erst sichtbar zu machen.
+    """
+    if not CUPS_AVAILABLE:
+        return []
+    try:
+        with anyio.fail_after(settings.cups_timeout_seconds):
+            return await anyio.to_thread.run_sync(_discover, settings)
+    except TimeoutError as exc:
+        raise AppError(
+            ErrorCode.CUPS_UNREACHABLE, detail="Zeitüberschreitung beim Suchen"
+        ) from exc
+
+
 def _probe_queue(printer: Printer, settings: Settings) -> tuple[ComponentStatus, str | None]:
     connection = _connect(printer, settings)
     queue = validate_queue_name(printer.queue_name)

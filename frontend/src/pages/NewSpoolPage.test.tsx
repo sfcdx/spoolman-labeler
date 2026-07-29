@@ -164,4 +164,30 @@ describe("NewSpoolPage", () => {
     // Breite hinaus — auf dem Handy darf dieses Konstrukt nicht vorkommen.
     expect(document.querySelector(".ant-input-number-group-addon")).not.toBeInTheDocument();
   });
+
+  it("blendet den Hinweis nach dem Wegklicken dauerhaft aus", async () => {
+    window.localStorage.clear();
+    const user = setupUser();
+    stubRoutedFetch([
+      [/\/api\/templates$/, () => jsonResponse([TEMPLATE])],
+      [/\/api\/printers$/, () => jsonResponse([PRINTER])],
+    ]);
+
+    const { unmount } = renderWithProviders(<NewSpoolPage />);
+    await screen.findByText(page.hint);
+
+    const closeIcon = document.querySelector(".ant-alert-close-icon");
+    if (!closeIcon) {
+      throw new Error("Schließen-Symbol des Hinweis-Alerts nicht gefunden");
+    }
+    await user.click(closeIcon);
+    await waitFor(() => {
+      expect(screen.queryByText(page.hint)).not.toBeInTheDocument();
+    });
+    unmount();
+
+    renderWithProviders(<NewSpoolPage />);
+    await screen.findByRole("heading", { level: 1, name: page.title });
+    expect(screen.queryByText(page.hint)).not.toBeInTheDocument();
+  });
 });

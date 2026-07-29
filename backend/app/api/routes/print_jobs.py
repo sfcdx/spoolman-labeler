@@ -5,8 +5,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_effective_settings
 from app.api.routes.spoolman import get_client
-from app.core.config import Settings, get_settings
+from app.core.config import Settings
 from app.db.session import get_session
 from app.models.enums import PrintJobStatus
 from app.schemas.print_job import PrintJobRead
@@ -39,7 +40,7 @@ async def get_print_job(
 async def retry_print_job(
     print_job_id: int,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: Settings = Depends(get_effective_settings),
     client: SpoolmanClient = Depends(get_client),
 ) -> PrintJobRead:
     job = await print_jobs_service.retry_print_job(session, client, settings, print_job_id)

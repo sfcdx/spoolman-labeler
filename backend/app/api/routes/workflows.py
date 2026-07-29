@@ -8,8 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_effective_settings
 from app.api.routes.spoolman import get_client
-from app.core.config import Settings, get_settings
+from app.core.config import Settings
 from app.core.errors import AppError
 from app.db.session import get_session
 from app.models.workflow_run import WorkflowRun
@@ -43,7 +44,7 @@ async def create_only(
     response: Response,
     request: CreateOnlyRequest,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: Settings = Depends(get_effective_settings),
     client: SpoolmanClient = Depends(get_client),
 ) -> dict[str, object]:
     try:
@@ -62,7 +63,7 @@ async def create_and_print(
     response: Response,
     request: CreateAndPrintRequest,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: Settings = Depends(get_effective_settings),
     client: SpoolmanClient = Depends(get_client),
 ) -> dict[str, object]:
     """Legt Spulen an und druckt im selben Vorgang ein Etikett je Spule.

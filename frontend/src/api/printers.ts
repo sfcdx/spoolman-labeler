@@ -47,6 +47,14 @@ export interface PrinterTestResult {
   detail: string | null;
 }
 
+/** Spiegelt `app/schemas/printer.py::DiscoveredPrinter`. */
+export interface DiscoveredPrinter {
+  queue_name: string;
+  model: string | null;
+  location: string | null;
+  supported: boolean;
+}
+
 export function listPrinters(signal?: AbortSignal): Promise<Printer[]> {
   return request<Printer[]>("/printers", signal ? { signal } : {});
 }
@@ -65,4 +73,8 @@ export function deletePrinter(id: number): Promise<void> {
 
 export function testPrinter(id: number): Promise<PrinterTestResult> {
   return request<PrinterTestResult>(`/printers/${id}/test`, { method: "POST" });
+}
+
+export function discoverPrinters(signal?: AbortSignal): Promise<DiscoveredPrinter[]> {
+  return request<DiscoveredPrinter[]>("/printers/discover", signal ? { signal } : {});
 }

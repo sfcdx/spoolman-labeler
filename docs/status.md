@@ -2,6 +2,74 @@
 
 **Letzte Aktualisierung:** 29. Juli 2026
 
+## Einstellungen editierbar, CUPS-Drucker-Discovery, mobile Nachschärfung (29. Juli 2026)
+
+Nutzerfeedback nach der ersten produktiven Nutzung (Screenshots von Spoolmans
+eigenem „Spule anlegen"-Formular als Vorbild) benannte mehrere konkrete
+Lücken. Umgesetzt wurde der Teil mit dem besten Aufwand-Nutzen-Verhältnis;
+größere strukturelle Wünsche sind unten bewusst als offen dokumentiert.
+
+**Neu, Backend:**
+- Das bisher komplett unangebundene `Setting`-Modell (Schlüssel-Wert-Tabelle,
+  existierte bereits im Grundschema) ist jetzt über `GET/PUT /api/settings`
+  und `DELETE /api/settings/{key}` erreichbar. Überschreibbar sind bewusst
+  nur drei Werte: `spoolman_public_url`, `cups_server`, `cups_port` —
+  sicherheitsrelevante oder infrastrukturelle Werte (DB-Pfad, interne
+  Spoolman-API-URL, Zugangsdaten) bleiben ausschließlich über
+  Umgebungsvariablen konfigurierbar. `app/api/deps.py::get_effective_settings`
+  wendet vorhandene Overrides auf die Laufzeitkonfiguration an und ersetzt
+  `Depends(get_settings)` überall dort, wo diese drei Werte tatsächlich
+  wirken (Workflows, Druckerverbindungstest, Retry).
+- Behebt den gemeldeten Fehler „Spoolman-Instanz-Link kann nicht gesetzt
+  werden": Die Spoolman-URL war zuvor nur als statischer Platzhaltertext in
+  der Oberfläche zu sehen, ohne jede Backend-Anbindung.
+- `GET /api/printers/discover`: fragt den konfigurierten CUPS-Server nach
+  bereits vorhandenen Warteschlangen (`cups_client.discover_queues`), auch
+  solchen, die extern per `lpadmin` angelegt wurden. Adressiert den
+  gemeldeten Fall „Drucker im Backend installiert, aber im Frontend nicht
+  auswählbar" — vorher gab es keine Möglichkeit, existierende Warteschlangen
+  überhaupt zu sehen, nur manuelles Abtippen des exakten Namens.
+
+**Neu, Frontend:**
+- `SettingsPage`: Die bisherigen statischen „Spoolman-Verbindung"/
+  „Drucksystem (CUPS)"-Karten sind durch echte Formulare ersetzt
+  (Speichern/Zurücksetzen auf Vorgabe, sichtbare Kennzeichnung ob ein Wert
+  angepasst wurde, „Spoolman öffnen"-Link sobald eine URL gesetzt ist).
+  Neuer „Drucker suchen"-Button zeigt gefundene CUPS-Warteschlangen; ein
+  Klick auf „Übernehmen" öffnet das Anlage-Formular mit Warteschlangenname,
+  Modell und Standort vorausgefüllt.
+- `TemplatesPage`: Formular hatte trotz vollständiger Backend-Unterstützung
+  keinen Schalter für `is_default` — ergänzt, analog zum bestehenden
+  Drucker-Formular.
+- `NewSpoolPage`: Der blaue Infohinweis ist jetzt wegklickbar und bleibt es
+  dauerhaft (Zustand in `localStorage`, nicht nur pro Sitzung).
+
+**Ergebnis:** 101 Backend-Tests (vorher 92), 55 Frontend-Tests, Ruff,
+mypy --strict, ESLint, Prettier, `tsc --noEmit` und der Produktionsbuild
+sind grün.
+
+**Bewusst nicht in diesem Schritt umgesetzt** (Nutzerwunsch war breiter als
+das hier Gelieferte — als bekannte Folgearbeit festgehalten):
+- Eine vollständige, an Spoolmans eigenem „Spule anlegen"-Formular
+  orientierte Neugestaltung von `NewSpoolPage` (einseitiges statt
+  vierstufiges Formular, große gruppierte Filament-Datenbank-Suche wie im
+  Screenshot gezeigt) — der bestehende Workflow wählt bereits automatisch
+  Standarddrucker/-vorlage vor und überspringt so implizit unnötige Klicks,
+  ist aber weiterhin ein vierstufiger Assistent statt einer einzigen Seite.
+- Ein eigener „vorhandene Spule erneut etikettieren"-Pfad ohne Neuanlage:
+  `SpoolmanClient` hat weiterhin keine Methode, um bestehende Spulen zu
+  suchen/aufzulisten (nur `get_spool` per ID). Ein Druck ohne Neuanlage ist
+  nur über die Druckhistorie (`retry`) möglich, nicht als eigenständiger
+  Einstiegspunkt.
+- Zwei getrennte Vorlagen-„Datenbanken" (Labeler-intern vs. aus Spoolman
+  gesynct) mit Auswahlmöglichkeit — der bestehende Import bleibt ein
+  Einmal-Import (Kopie zum Zeitpunkt des Imports), keine laufende
+  Synchronisation mit Spoolmans Presets.
+- `cups_server`/`cups_port` sind als Override erreichbar, aber die
+  Oberfläche unterscheidet nicht explizit zwischen den drei
+  CUPS-Deployment-Varianten aus ADR-005 — für den Standardfall (Docker-
+  Sidecar) ist das Feld unnötig, wird aber weiterhin angezeigt.
+
 ## Hauptworkflow vollständig funktionsfähig (29. Juli 2026)
 
 Nach der Produktivinstallation neben Spoolman (siehe Installationsprotokoll

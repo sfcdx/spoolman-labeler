@@ -14,6 +14,7 @@ from app.core.config import Settings
 from app.core.errors import AppError
 from app.models.printer import Printer
 from app.services.printing.cups_client import (
+    discover_queues,
     get_job_status,
     submit_print_job,
     validate_queue_name,
@@ -104,3 +105,31 @@ async def test_get_job_status_liefert_unbekannt_bei_verbindungsfehler(settings: 
         status = await get_job_status(printer=_printer(), settings=settings, cups_job_id=1)
 
     assert status.status.value == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_discover_queues_liefert_gefundene_warteschlangen(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection = MagicMock()
+    connection.getPrinters.return_value = {
+        "M110S": {"printer-make-and-model": "Phomemo M110S", "printer-location": "Werkstatt"},
+        "mit leerzeichen": {},
+    }
+    fake_cups = MagicMock()
+    fake_cups.Connection.return_value = connection
+    monkeypatch.setattr("app.services.printing.cups_client.CUPS_AVAILABLE", True)
+    monkeypatch.setattr("app.services.printing.cups_client.cups", fake_cups)
+
+    queues = await discover_queues(settings=settings)
+
+    by_name = {queue.queue_name: queue for queue in queues}
+    assert by_name["M110S"].supported is True
+    assert by_name["M110S"].model == "Phomemo M110S"
+    assert by_name["M110S"].location == "Werkstatt"
+    assert by_name["mit leerzeichen"].supported is False
+
+
+@pytest.mark.asyncio
+async def test_discover_queues_ohne_cups_liefert_leere_liste(settings: Settings) -> None:
+    assert await discover_queues(settings=settings) == []

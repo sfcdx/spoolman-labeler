@@ -92,6 +92,30 @@ async def test_testverbindung_ohne_cups_meldet_deaktiviert(
     assert response.json()["status"] == ComponentStatus.DISABLED.value
 
 
+async def test_discover_liefert_gefundene_warteschlangen(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.services.printing.cups_client import DiscoveredQueue
+
+    discover = AsyncMock(
+        return_value=[
+            DiscoveredQueue(
+                queue_name="M110S", model="Phomemo M110S", location=None, supported=True
+            )
+        ]
+    )
+    monkeypatch.setattr("app.api.routes.printers.discover_queues", discover)
+
+    response = await client.get("/api/printers/discover")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body == [
+        {"queue_name": "M110S", "model": "Phomemo M110S", "location": None, "supported": True}
+    ]
+    discover.assert_awaited_once()
+
+
 async def test_testverbindung_meldet_erfolg(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

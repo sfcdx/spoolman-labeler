@@ -158,6 +158,7 @@ export const texts = {
         css: "CSS",
         width: "Breite (mm)",
         height: "Höhe (mm)",
+        isDefault: "Als Standardvorlage verwenden",
       },
       actions: {
         edit: "Bearbeiten",
@@ -190,6 +191,7 @@ export const texts = {
       fields: {
         spoolmanUrl: "Spoolman-Basis-URL",
         cupsServer: "CUPS-Server",
+        cupsPort: "CUPS-Port",
         defaultPrinter: "Standarddrucker",
         defaultTemplate: "Standardvorlage",
         name: "Name",
@@ -208,6 +210,25 @@ export const texts = {
       },
       securityNote:
         "Spoolman kennt keine Authentifizierung. Betreiben Sie den gesamten Stack ausschließlich in einem vertrauenswürdigen lokalen Netzwerk.",
+      connection: {
+        save: "Speichern",
+        reset: "Auf Vorgabe zurücksetzen",
+        saveFailed: "Die Einstellung konnte nicht gespeichert werden.",
+        overridden: "Angepasst",
+        default: "Vorgabe aus der Umgebungskonfiguration",
+        openSpoolman: "Spoolman öffnen",
+        cupsHint:
+          "Wird bereits mit dem Stack ausgeliefert (siehe Docker-Compose). Nur ändern, wenn ein externer CUPS-Server verwendet wird.",
+      },
+      discover: {
+        button: "Drucker suchen",
+        searching: "Suche läuft …",
+        empty: "Auf dem konfigurierten CUPS-Server wurden keine Warteschlangen gefunden.",
+        failed: "Die Drucker-Suche ist fehlgeschlagen.",
+        unsupported: "Name enthält nicht unterstützte Zeichen",
+        use: "Übernehmen",
+        title: "Gefundene CUPS-Warteschlangen",
+      },
       printers: {
         add: "Drucker hinzufügen",
         empty: "Es ist noch kein Drucker eingerichtet.",

@@ -43,6 +43,17 @@ const page = texts.pages.newSpool;
 const MAX_QUANTITY = 50;
 const SEARCH_DEBOUNCE_MS = 300;
 
+/** Sobald einmal weggeklickt, taucht der Hinweis nie wieder auf (dauerhaft, nicht nur pro Sitzung). */
+const HINT_DISMISSED_STORAGE_KEY = "spoolman-labeler:new-spool-hint-dismissed";
+
+function readHintDismissed(): boolean {
+  try {
+    return window.localStorage.getItem(HINT_DISMISSED_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 function generateIdempotencyKey(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
@@ -94,6 +105,7 @@ interface ResultRow {
 export function NewSpoolPage(): React.JSX.Element {
   const isMobile = useIsMobile();
   const [current, setCurrent] = useState(0);
+  const [hintDismissed, setHintDismissed] = useState(readHintDismissed);
 
   // Schritt 1: Filament
   const [filamentMode, setFilamentMode] = useState<"existing" | "new">("existing");
@@ -241,7 +253,24 @@ export function NewSpoolPage(): React.JSX.Element {
           ]}
         />
 
-        <Alert type="info" showIcon message={page.hint} />
+        {!hintDismissed ? (
+          <Alert
+            type="info"
+            showIcon
+            closable
+            message={page.hint}
+            onClose={() => {
+              setHintDismissed(true);
+              try {
+                window.localStorage.setItem(HINT_DISMISSED_STORAGE_KEY, "1");
+              } catch {
+                // Speicher nicht verfuegbar (z. B. privater Modus) — der
+                // Hinweis erscheint dann beim naechsten Laden erneut, was
+                // immer noch besser ist als ein Fehler beim Wegklicken.
+              }
+            }}
+          />
+        ) : null}
 
         {current === 0 ? (
           <Card title={page.steps.filament}>

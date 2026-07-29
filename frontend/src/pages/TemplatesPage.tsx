@@ -1,6 +1,18 @@
 import { useEffect, useState } from "react";
 import { PlusOutlined } from "@ant-design/icons";
-import { Alert, Button, Card, Empty, Input, List, Modal, Space, Tag, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Empty,
+  Input,
+  List,
+  Modal,
+  Space,
+  Switch,
+  Tag,
+  Typography,
+} from "antd";
 import { PageHeading } from "./PageHeading";
 import { LabeledNumber } from "../components/LabeledNumber";
 import { useIsMobile } from "../hooks/useMediaQuery";
@@ -81,6 +93,7 @@ export function TemplatesPage(): React.JSX.Element {
       css_content: template.css_content,
       width_mm: template.width_mm,
       height_mm: template.height_mm,
+      is_default: template.is_default,
     });
     setFormError(undefined);
     setFormOpen(true);
@@ -317,6 +330,15 @@ export function TemplatesPage(): React.JSX.Element {
                 setForm({ ...form, height_mm: value ?? form.height_mm });
               }}
             />
+          </Space>
+          <Space>
+            <Switch
+              checked={form.is_default ?? false}
+              onChange={(checked) => {
+                setForm({ ...form, is_default: checked });
+              }}
+            />
+            <Typography.Text>{page.fields.isDefault}</Typography.Text>
           </Space>
           <Typography.Text type="secondary">{page.fields.html}</Typography.Text>
           <Input.TextArea

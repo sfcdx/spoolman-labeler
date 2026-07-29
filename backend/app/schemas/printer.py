@@ -82,3 +82,15 @@ class PrinterRead(PrinterBase):
 class PrinterTestResult(BaseModel):
     status: str
     detail: str | None = None
+
+
+class DiscoveredPrinter(BaseModel):
+    """Eine auf dem CUPS-Server bereits vorhandene, noch nicht importierte Warteschlange."""
+
+    queue_name: str
+    model: str | None = None
+    location: str | None = None
+    #: ``False`` bedeutet: der Name enthaelt Zeichen ausserhalb von
+    #: ``_QUEUE_NAME_PATTERN`` und kann in dieser Anwendung nicht als
+    #: Drucker angelegt werden.
+    supported: bool

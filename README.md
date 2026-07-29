@@ -87,6 +87,7 @@ kommuniziert ausschließlich über die offizielle REST-API und schreibt
 | Historie    | Druckaufträge mit Status, Fehlern und erneutem Druck                   |
 | Vorlagen    | Anlegen, bearbeiten, duplizieren, importieren, exportieren, testen     |
 | Darstellung | Light und Dark Mode, responsiv, an Spoolman angelehnt                 |
+| Einstellungen | Spoolman-Link und (optional) CUPS-Server/-Port zur Laufzeit änderbar, ohne Neustart; Drucker-Suche findet bereits auf CUPS eingerichtete Warteschlangen |
 
 Was **nicht** zum ersten Release gehört (grafischer Etikettendesigner, RFID,
 Benutzerverwaltung, native Druckertreiber und mehr), ist in

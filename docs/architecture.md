@@ -443,6 +443,37 @@ Stelle an, nicht jede Vorlage.
 
 ---
 
+### ADR-015 — Laufzeit-Einstellungen: kleine, explizite Override-Liste statt voller Config-Editor
+
+**Kontext.** Die `settings`-Tabelle existierte von Anfang an im Grundschema,
+war aber ungenutzt — jede Konfiguration lief ausschließlich über
+Umgebungsvariablen (`app/core/config.py::Settings`). Das ist für einen
+Docker-Stack der richtige Default, verhindert aber, einzelne Werte (etwa den
+öffentlichen Spoolman-Link) ohne Container-Neustart zu ändern.
+
+**Entscheidung.** Nur drei Schlüssel sind über `/api/settings` änderbar:
+`spoolman_public_url`, `cups_server`, `cups_port`
+(`app/services/settings.py::OVERRIDABLE_KEYS`). Alles andere — Datenbankpfad,
+interne Spoolman-API-URL, CUPS-Zugangsdaten, Ressourcengrenzen — bleibt
+ausschließlich über Umgebungsvariablen konfigurierbar. `get_effective_settings`
+(`app/api/deps.py`) liest die DB-Overrides bei jedem Request neu und legt sie
+per `Settings.model_copy(update=...)` über die env-Vorgaben; es gibt bewusst
+keinen Cache, weil die Werte selten gelesen, aber jederzeit über die
+Oberfläche änderbar sein sollen.
+
+**Konsequenzen.**
+- Kein Geheimnis ist über diesen Weg änderbar — `is_secret` auf `Setting`
+  bleibt für eine mögliche spätere Erweiterung reserviert, wird aber von den
+  drei aktuell erlaubten Schlüsseln nicht benötigt.
+- Ein per Umgebungsvariable geänderter Wert setzt sich beim nächsten
+  Container-Start weiterhin durch, sofern kein DB-Override existiert — das
+  Verhalten ist additiv, keine Migration nötig.
+- CUPS-Server/-Port sind absichtlich weiterhin änderbar, obwohl der
+  Standard-Stack (ADR-005, Variante B: Docker-Sidecar) sie nie braucht — sie
+  bleiben relevant für Variante C (externer CUPS-Server im LAN).
+
+---
+
 ## 4. Datenmodell
 
 Tabellen der eigenen SQLite-Datenbank:

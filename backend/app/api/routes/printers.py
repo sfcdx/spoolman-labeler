@@ -5,16 +5,18 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import Settings, get_settings
+from app.api.deps import get_effective_settings
+from app.core.config import Settings
 from app.db.session import get_session
 from app.schemas.printer import (
+    DiscoveredPrinter,
     PrinterCreate,
     PrinterRead,
     PrinterTestResult,
     PrinterUpdate,
 )
 from app.services import printers as printers_service
-from app.services.printing.cups_client import probe_printer
+from app.services.printing.cups_client import discover_queues, probe_printer
 
 router = APIRouter(prefix="/printers", tags=["printers"])
 
@@ -33,6 +35,27 @@ async def create_printer(
 ) -> PrinterRead:
     printer = await printers_service.create_printer(session, data)
     return PrinterRead.model_validate(printer)
+
+
+@router.get("/discover", response_model=list[DiscoveredPrinter])
+async def discover_printers(
+    settings: Settings = Depends(get_effective_settings),
+) -> list[DiscoveredPrinter]:
+    """Listet Warteschlangen, die auf dem konfigurierten CUPS-Server bereits existieren.
+
+    Damit laesst sich ein extern (z. B. per ``lpadmin``) angelegter Drucker
+    auswaehlen, ohne den Warteschlangennamen von Hand abzutippen.
+    """
+    queues = await discover_queues(settings=settings)
+    return [
+        DiscoveredPrinter(
+            queue_name=queue.queue_name,
+            model=queue.model,
+            location=queue.location,
+            supported=queue.supported,
+        )
+        for queue in queues
+    ]
 
 
 @router.get("/{printer_id}", response_model=PrinterRead)
@@ -57,7 +80,7 @@ async def delete_printer(printer_id: int, session: AsyncSession = Depends(get_se
 async def test_printer(
     printer_id: int,
     session: AsyncSession = Depends(get_session),
-    settings: Settings = Depends(get_settings),
+    settings: Settings = Depends(get_effective_settings),
 ) -> PrinterTestResult:
     """Prueft die Erreichbarkeit der Warteschlange.
 

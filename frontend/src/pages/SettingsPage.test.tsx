@@ -34,6 +34,15 @@ const PRINTER = {
   updated_at: "2026-01-01T00:00:00Z",
 };
 
+const APP_SETTINGS = {
+  spoolman_public_url: "http://localhost:7912",
+  spoolman_public_url_overridden: false,
+  cups_server: "cups",
+  cups_server_overridden: false,
+  cups_port: 631,
+  cups_port_overridden: false,
+};
+
 describe("SettingsPage", () => {
   it("zeigt geladene Drucker mit Standard-Kennzeichnung", async () => {
     stubRoutedFetch([[/\/api\/printers$/, () => jsonResponse([PRINTER])]]);
@@ -100,5 +109,68 @@ describe("SettingsPage", () => {
 
     await screen.findByText(PRINTER.name);
     expect(document.querySelector(".ant-list-vertical")).toBeInTheDocument();
+  });
+
+  it("speichert die Spoolman-URL und zeigt einen Öffnen-Link", async () => {
+    const user = setupUser();
+    let saved: unknown;
+    stubRoutedFetch([
+      [/\/api\/printers$/, () => jsonResponse([])],
+      [
+        /\/api\/settings$/,
+        (_url, init) => {
+          if (init?.method === "PUT") {
+            saved = JSON.parse(init.body as string);
+            return jsonResponse({
+              ...APP_SETTINGS,
+              spoolman_public_url: "http://spoolman.local:7912",
+              spoolman_public_url_overridden: true,
+            });
+          }
+          return jsonResponse(APP_SETTINGS);
+        },
+      ],
+    ]);
+
+    renderWithProviders(<SettingsPage />);
+    const input = await screen.findByPlaceholderText(page.fields.spoolmanUrl);
+    await user.clear(input);
+    await user.type(input, "http://spoolman.local:7912");
+    const [saveButton] = screen.getAllByRole("button", { name: page.connection.save });
+    if (!saveButton) {
+      throw new Error("Speichern-Schaltfläche nicht gefunden");
+    }
+    await user.click(saveButton);
+
+    await waitFor(() => {
+      expect(saved).toEqual({ spoolman_public_url: "http://spoolman.local:7912" });
+    });
+    await screen.findByRole("link", { name: page.connection.openSpoolman });
+    expect(screen.getByText(page.connection.overridden)).toBeInTheDocument();
+  });
+
+  it("sucht Drucker auf dem CUPS-Server und uebernimmt eine gefundene Warteschlange", async () => {
+    const user = setupUser();
+    stubRoutedFetch([
+      [
+        /\/api\/printers\/discover$/,
+        () =>
+          jsonResponse([
+            { queue_name: "M110S", model: "Phomemo M110S", location: null, supported: true },
+          ]),
+      ],
+      [/\/api\/printers$/, () => jsonResponse([])],
+      [/\/api\/settings$/, () => jsonResponse(APP_SETTINGS)],
+    ]);
+
+    renderWithProviders(<SettingsPage />);
+    await user.click(screen.getByRole("button", { name: page.discover.button }));
+
+    await screen.findByText("M110S");
+    await user.click(screen.getByRole("button", { name: page.discover.use }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByPlaceholderText(page.fields.queueName)).toHaveValue("M110S");
+    expect(within(dialog).getByPlaceholderText(page.fields.name)).toHaveValue("Phomemo M110S");
   });
 });

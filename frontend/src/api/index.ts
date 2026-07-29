@@ -4,8 +4,17 @@ export { ApiError, parseErrorPayload } from "./errors";
 export type { ApiErrorCode, ClientErrorCode, KnownApiErrorCode } from "./errors";
 export { getHealth, normalizeHealth } from "./health";
 export type { Health, HealthComponent, HealthState } from "./health";
-export { createPrinter, deletePrinter, listPrinters, testPrinter, updatePrinter } from "./printers";
-export type { Printer, PrinterInput, PrinterTestResult } from "./printers";
+export {
+  createPrinter,
+  deletePrinter,
+  discoverPrinters,
+  listPrinters,
+  testPrinter,
+  updatePrinter,
+} from "./printers";
+export type { DiscoveredPrinter, Printer, PrinterInput, PrinterTestResult } from "./printers";
+export { clearAppSetting, getAppSettings, updateAppSettings } from "./settings";
+export type { AppSettings, AppSettingKey, AppSettingsInput } from "./settings";
 export {
   createTemplate,
   deleteTemplate,
