@@ -58,8 +58,19 @@ große Filament-Datenbank).
   ausgeblendet (serverseitiger Default) und nur über ein „Erweitert"-Panel
   erreichbar.
 
-**Ergebnis:** 114 Backend-Tests (vorher 101). Frontend-Testzahlen und
--Ergebnis siehe unten (Umbau in einem separaten Arbeitsschritt abgeschlossen).
+**Ergebnis:** 114 Backend-Tests (vorher 101), 57 Frontend-Tests (vorher 55).
+Ruff, mypy --strict, ESLint, Prettier, `tsc --noEmit`, Produktionsbuild:
+durchgehend grün.
+
+**Bewusst nicht umgesetzt** (siehe auch weiter unten „Bewusst nicht in
+diesem Schritt umgesetzt" des vorherigen Schritts, weiterhin gültig):
+- Zwei getrennte Vorlagen-„Datenbanken" (Labeler-intern vs. laufend aus
+  Spoolman gesynct) — der Spoolman-Preset-Import bleibt ein Einmal-Import.
+- Visuelle 1:1-Nachbildung der Spoolman-Screenshots (z. B. große Kachel-
+  Auswahl statt `Segmented`-Umschalter für die zwei Einstiegspfade,
+  Farb-Swatches direkt in der Ergebnisliste der Spulensuche statt nur in der
+  Detailansicht) — funktional gleichwertig umgesetzt, aber nicht pixelgenau
+  am Vorbild.
 
 ## Einstellungen editierbar, CUPS-Drucker-Discovery, mobile Nachschärfung (29. Juli 2026)
 
