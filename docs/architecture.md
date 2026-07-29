@@ -441,6 +441,17 @@ Stelle an, nicht jede Vorlage.
 - Fehlende Werte müssen im View-Model abgefangen werden — Spoolman lässt
   `null`-Felder komplett weg, statt sie als `null` zu senden.
 
+**Nachtrag (29. Juli 2026).** Beide hier dokumentierten Konsequenzen waren
+zunächst nicht vollständig durchgesetzt: (1) die „harte Zeitbegrenzung" für
+`render_pdf` existierte nur als Konfigurationswert (`render_timeout_seconds`),
+wurde aber nirgends angewendet — behoben durch `anyio.to_thread.run_sync(...,
+abandon_on_cancel=True)` innerhalb von `anyio.fail_after(...)`. (2) das
+Abfangen fehlender Werte im View-Model war unvollständig: `build_label_context`
+gab verschachtelte Dicts unverändert weiter, sodass ein tatsächlich fehlendes
+Feld (nicht nur ein leeres) die Jinja-Sandbox mit `UndefinedError` abbrechen
+ließ — auch bei der mitgelieferten Standardvorlage. Behoben durch
+Vorbelegung aller bekannten Spool-/Filament-/Vendor-Felder mit `None`.
+
 ---
 
 ### ADR-015 — Laufzeit-Einstellungen: kleine, explizite Override-Liste statt voller Config-Editor
@@ -471,6 +482,44 @@ Oberfläche änderbar sein sollen.
 - CUPS-Server/-Port sind absichtlich weiterhin änderbar, obwohl der
   Standard-Stack (ADR-005, Variante B: Docker-Sidecar) sie nie braucht — sie
   bleiben relevant für Variante C (externer CUPS-Server im LAN).
+
+---
+
+### ADR-016 — Zwei Workflow-Einstiege, serverseitige Standardauflösung statt Pflichtauswahl
+
+**Kontext.** Der ursprüngliche Workflow verlangte bei jedem Druck eine
+explizite Vorlagen- und Druckerauswahl und bot nur einen Weg: Filament
+(vorhanden oder neu) plus Spulendaten erfassen, dann anlegen und drucken. Das
+deckt weder den häufigsten Fall („eine bereits angelegte Spule erneut
+etikettieren") noch den Wunsch nach einem möglichst kurzen Workflow ab, wenn
+ohnehin fast immer derselbe Drucker/dieselbe Vorlage verwendet wird.
+
+**Entscheidung.** Zwei getrennte, gleichrangige Workflow-Einstiege:
+`POST /api/workflows/create-and-print` (Filament + Spule anlegen und
+drucken) und `POST /api/workflows/print-existing` (eine bestehende Spule
+direkt bedrucken, ohne etwas in Spoolman zu verändern). Beide akzeptieren
+`template_id`/`printer_id` optional — fehlen sie, lösen
+`templates_service.get_default_template`/`printers_service.get_default_printer`
+serverseitig auf (bevorzugt den als Standard markierten, aktivierten
+Eintrag; sonst den ersten verfügbaren). Die konkrete Auswahl bleibt damit ein
+reiner Präsentationsdetail des Frontends (z. B. hinter einem „Erweitert"-
+Klapp-Panel), nicht länger ein Pflichtschritt jedes Druckvorgangs.
+
+**Konsequenzen.**
+- `print-existing` legt bewusst **nichts** in Spoolman an — die Spule wird
+  nur per `SpoolmanClient.get_spool` gelesen. Ein `PrintJob`-Datensatz
+  entsteht dabei ohne zugehörigen `WorkflowRun` (`workflow_run_id` bleibt
+  `NULL`), weil kein Anlegen-Schritt existiert, der eine Idempotenzgruppe
+  bräuchte.
+- `SpoolmanClient.search_spools` stellt bei einer Freitextsuche zwei
+  Anfragen (Filtern auf `filament.name` bzw. `filament.vendor.name`) und
+  dedupliziert über die Spulen-ID, weil Spoolmans Query-Parameter
+  untereinander UND- statt ODER-verknüpft sind (siehe
+  docs/spoolman-api-analysis.md Abschnitt 5.3) und eine einzelne Anfrage
+  daher kein „Feld A ODER Feld B enthält X" ausdrücken kann.
+- Ein leerer Druckerbestand (kein aktivierter Drucker vorhanden) liefert
+  `PRINTER_NOT_FOUND` mit einem auf den fehlenden Drucker zugeschnittenen
+  Detailtext — nicht denselben Text wie bei einer ungültigen expliziten ID.
 
 ---
 

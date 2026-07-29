@@ -26,15 +26,22 @@ export {
   updateTemplate,
 } from "./templates";
 export type { LabelTemplate, TemplateImportResult, TemplateInput } from "./templates";
-export { createAndPrint, getWorkflow } from "./workflows";
+export { createAndPrint, getWorkflow, printExisting } from "./workflows";
 export type {
   CreateAndPrintInput,
   NewFilamentInput,
+  PrintExistingInput,
   SpoolFieldsInput,
   WorkflowError,
   WorkflowRunResult,
 } from "./workflows";
 export { listPrintJobs, retryPrintJob } from "./printJobs";
 export type { PrintJob, PrintJobStatus } from "./printJobs";
-export { createVendor, listPrintPresets, searchFilaments, searchVendors } from "./spoolman";
-export type { SpoolmanFilament, SpoolmanVendor } from "./spoolman";
+export {
+  createVendor,
+  listPrintPresets,
+  searchFilaments,
+  searchSpools,
+  searchVendors,
+} from "./spoolman";
+export type { SpoolmanFilament, SpoolmanSpool, SpoolmanVendor } from "./spoolman";

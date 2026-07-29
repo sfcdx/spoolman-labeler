@@ -2,6 +2,65 @@
 
 **Letzte Aktualisierung:** 29. Juli 2026
 
+## Vollständiger Umbau: zwei Workflow-Pfade, Spoolman-Schnittstelle gehärtet (29. Juli 2026)
+
+Auftrag: den zuvor bewusst zurückgestellten großen Umbauwunsch (einseitiges,
+an Spoolman angelehntes Formular; „vorhandene Spule drucken" als eigener
+Pfad) jetzt vollständig umsetzen, plus eine gezielte Sicherheits-/
+Schwachstellenanalyse der Datenschnittstelle zu Spoolman (Etikettenvorlagen,
+große Filament-Datenbank).
+
+**Sicherheitsanalyse — zwei echte Befunde behoben:**
+- ADR-014 versprach eine harte Render-Zeitbegrenzung für Etiketten-PDFs, die
+  nie durchgesetzt wurde: `render_pdf` lief synchron und unbegrenzt direkt im
+  Request-Handler. Ein aus einem Spoolman-Preset importiertes und danach
+  verändertes Template mit teurem CSS hätte den gesamten (Single-Worker-)
+  Event-Loop blockieren können — DoS für die ganze Anwendung, nicht nur den
+  Request. Behoben: `render_pdf` läuft jetzt in einem abbrechbaren
+  Worker-Thread (`anyio.to_thread.run_sync(..., abandon_on_cancel=True)`)
+  mit `anyio.fail_after(render_timeout_seconds)`.
+- **Echter Produktionsbug gefunden:** Spoolman lässt Felder mit dem Wert
+  `null` in JSON-Antworten komplett weg (`exclude_none=True`), statt sie als
+  `null` zu senden. Die Jinja-Sandbox (`StrictUndefined`) brach deshalb bei
+  jedem Spoolman-Datensatz mit auch nur einem fehlenden Feld ab — reproduzierbar
+  sogar mit der mitgelieferten Standardvorlage, sobald z. B. der Filamentname
+  nicht gesetzt war. `build_label_context` belegt jetzt alle bekannten
+  Spool-/Filament-/Vendor-Felder mit `None` vor, bevor Nutzerdaten
+  überschrieben werden. War bereits als Backlog-Punkt „fehlende Keys statt
+  null erwarten" bekannt, jetzt mit Regressionstest verifiziert und behoben
+  (`tests/test_label_context.py`).
+- Kleinere Härtung: `SpoolmanClient.vendors()`/`filaments()` sanieren
+  Freitext vor dem Versand (Komma/Anführungszeichen hätten Spoolmans
+  Filter-DSL sonst ungewollt als ODER-Verknüpfung bzw. Exakt-Vergleich
+  interpretiert) und begrenzen `limit` serverseitig auf maximal 200 — relevant
+  bei einer großen, über die externe Herstellerdatenbank gefüllten
+  Filament-Liste.
+
+**Neu, Backend:**
+- `GET /api/spoolman/spools/search` — durchsucht bestehende, nicht
+  archivierte Spulen (Freitext über Filament-/Herstellername, zwei separate
+  Spoolman-Anfragen mit ID-Deduplizierung, da Spoolmans Query-Parameter
+  UND-verknüpft sind).
+- `POST /api/workflows/print-existing` — neuer zweiter Workflow-Einstieg:
+  druckt eine bestehende Spule direkt, ohne in Spoolman irgendetwas
+  anzulegen oder zu verändern.
+- `POST /api/workflows/create-and-print`: `template_id`/`printer_id` sind
+  jetzt optional. Ohne Angabe löst der Server automatisch die Standardvorlage
+  bzw. den Standarddrucker auf (`templates_service.get_default_template`,
+  `printers_service.get_default_printer`) — Kernwunsch „viel presetten,
+  kürzere Workflows" aus der Nutzerrückmeldung.
+
+**Neu, Frontend:**
+- `NewSpoolPage` vollständig neu gebaut: kein vierstufiger Assistent mehr,
+  sondern zwei klare Einstiegspfade — „Vorhandene Spule drucken" (Suche +
+  Direktdruck ohne Neuanlage) und „Neue Spule" (einseitiges Formular statt
+  Wizard, größere Eingaben). Drucker-/Vorlagenauswahl ist standardmäßig
+  ausgeblendet (serverseitiger Default) und nur über ein „Erweitert"-Panel
+  erreichbar.
+
+**Ergebnis:** 114 Backend-Tests (vorher 101). Frontend-Testzahlen und
+-Ergebnis siehe unten (Umbau in einem separaten Arbeitsschritt abgeschlossen).
+
 ## Einstellungen editierbar, CUPS-Drucker-Discovery, mobile Nachschärfung (29. Juli 2026)
 
 Nutzerfeedback nach der ersten produktiven Nutzung (Screenshots von Spoolmans

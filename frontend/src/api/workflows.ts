@@ -1,5 +1,6 @@
 import { API_BASE_PATH, request } from "./client";
 import { ApiError, parseErrorPayload } from "./errors";
+import type { PrintJob } from "./printJobs";
 
 export interface WorkflowError {
   code: string;
@@ -39,8 +40,19 @@ export interface CreateAndPrintInput {
   new_filament?: NewFilamentInput | null;
   spool: SpoolFieldsInput;
   quantity: number;
-  template_id: number;
-  printer_id: number;
+  /** `null`/weggelassen löst serverseitig die Standardvorlage auf. */
+  template_id?: number | null;
+  /** `null`/weggelassen löst serverseitig den Standarddrucker auf. */
+  printer_id?: number | null;
+  copies?: number | null;
+}
+
+export interface PrintExistingInput {
+  spool_id: number;
+  /** `null`/weggelassen löst serverseitig die Standardvorlage auf. */
+  template_id?: number | null;
+  /** `null`/weggelassen löst serverseitig den Standarddrucker auf. */
+  printer_id?: number | null;
   copies?: number | null;
 }
 
@@ -106,4 +118,55 @@ export async function createAndPrint(data: CreateAndPrintInput): Promise<Workflo
 
 export function getWorkflow(id: number): Promise<WorkflowRunResult> {
   return request<WorkflowRunResult>(`/workflows/${id}`);
+}
+
+function isPrintJob(value: unknown): value is PrintJob {
+  return typeof value === "object" && value !== null && "id" in value && "status" in value;
+}
+
+/**
+ * Druckt eine bereits in Spoolman vorhandene Spule, ohne etwas anzulegen.
+ *
+ * Wie `create-and-print` antwortet der Server bei `status === "failed"` mit
+ * HTTP 502, aber demselben, vollständig auswertbaren `PrintJobRead`-Body
+ * (siehe `backend/app/api/routes/workflows.py::print_existing`) — der
+ * generische `request()`-Wrapper würde diesen Body bei 502 verwerfen. Daher
+ * bewusst derselbe Fetch-Trick wie bei {@link createAndPrint}.
+ */
+export async function printExisting(data: PrintExistingInput): Promise<PrintJob> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_PATH}/workflows/print-existing`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(data),
+      credentials: "same-origin",
+    });
+  } catch (cause) {
+    throw new ApiError({ code: "NETWORK_ERROR", message: "Netzwerkfehler", cause });
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch (cause) {
+    throw new ApiError({
+      code: "INVALID_RESPONSE",
+      message: "Der Server hat eine unerwartete Antwort geliefert.",
+      status: response.status,
+      cause,
+    });
+  }
+
+  if (isPrintJob(payload)) {
+    return payload;
+  }
+
+  const parsed = parseErrorPayload(response.status, payload);
+  throw new ApiError({
+    code: parsed.code,
+    message: parsed.message,
+    status: response.status,
+    details: parsed.details,
+  });
 }

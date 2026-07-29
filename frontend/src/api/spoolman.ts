@@ -36,6 +36,30 @@ export function searchFilaments(name: string, signal?: AbortSignal): Promise<Spo
   });
 }
 
+/**
+ * Bereits in Spoolman vorhandene Spule (nicht archiviert), wie sie
+ * `GET /spoolman/spools/search` liefert. Spoolman lässt `null`-Felder weg —
+ * hier bewusst nur die Felder typisiert, die die Oberfläche anzeigt.
+ */
+export interface SpoolmanSpool {
+  id: number;
+  filament?: SpoolmanFilament | null;
+  location?: string | null;
+  lot_nr?: string | null;
+  [key: string]: unknown;
+}
+
+export function searchSpools(
+  query?: string,
+  limit?: number,
+  signal?: AbortSignal,
+): Promise<SpoolmanSpool[]> {
+  return request<SpoolmanSpool[]>("/spoolman/spools/search", {
+    query: { query: query || undefined, limit },
+    ...(signal ? { signal } : {}),
+  });
+}
+
 export function listPrintPresets(signal?: AbortSignal): Promise<Record<string, unknown>[]> {
   return request<Record<string, unknown>[]>("/spoolman/print-presets", signal ? { signal } : {});
 }
