@@ -52,15 +52,30 @@ export const texts = {
   pages: {
     newSpool: {
       title: "Neue Spule",
-      subtitle: "Filamentspule in Spoolman anlegen und im selben Vorgang ein Etikett drucken.",
-      steps: {
-        filament: "Filament wählen",
-        spool: "Spulendaten erfassen",
-        label: "Etikett wählen",
-        print: "Anlegen und drucken",
-      },
+      subtitle: "Spule etikettieren: vorhandene Spule sofort drucken oder neue Spule anlegen.",
       hint: "Anlegen und Drucken sind getrennte Schritte: Schlägt der Druck fehl, bleibt die angelegte Spule bestehen und kann erneut gedruckt werden.",
+      entry: {
+        existing: "Vorhandene Spule Etikett drucken",
+        existingHint: "Eine bereits in Spoolman angelegte Spule suchen und direkt drucken.",
+        new: "Neue Spule",
+        newHint: "Filament und Spulendaten erfassen und im selben Vorgang drucken.",
+      },
+      existing: {
+        searchPlaceholder: "Spule suchen (Filament oder Hersteller) …",
+        none: "Keine Spule ausgewählt",
+        selectedTitle: "Ausgewählte Spule",
+        spoolId: "Spoolman-ID",
+        material: "Material",
+        location: "Lagerort",
+        printAction: "Drucken",
+        printing: "Wird gedruckt …",
+        printSuccess: "Druckauftrag wurde ausgelöst",
+        printFailed: "Druck fehlgeschlagen",
+        searchAgain: "Weitere Spule suchen",
+        printAgain: "Erneut drucken",
+      },
       filament: {
+        sectionTitle: "Filament",
         modeExisting: "Vorhandenes Filament",
         modeNew: "Neues Filament anlegen",
         search: "Filament suchen (Name oder Material)",
@@ -77,6 +92,7 @@ export const texts = {
         diameter: "Durchmesser (mm)",
       },
       spool: {
+        sectionTitle: "Spulendaten",
         quantity: "Anzahl Spulen",
         quantityHint: "Jede Spule erhält eine eigene Spoolman-ID und ein eigenes Etikett.",
         location: "Lagerort",
@@ -85,10 +101,12 @@ export const texts = {
         initialWeight: "Anfangsgewicht (g)",
         spoolWeight: "Leergewicht der Spule (g)",
       },
-      label: {
+      advanced: {
+        toggle: "Erweitert: Drucker und Vorlage",
         template: "Vorlage",
         printer: "Drucker",
         copies: "Kopien je Etikett",
+        auto: "Es wird die hinterlegte Standardvorlage bzw. der Standarddrucker verwendet.",
         noTemplates: "Es sind noch keine Vorlagen vorhanden.",
         noPrinters: "Es ist noch kein Drucker eingerichtet.",
         goToTemplates: "Zu den Vorlagen",

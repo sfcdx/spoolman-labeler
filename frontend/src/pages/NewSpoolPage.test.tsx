@@ -61,52 +61,138 @@ const FILAMENT = {
   vendor: { id: 1, name: "ACME" },
 };
 
-async function goToLabelStep(user: ReturnType<typeof setupUser>): Promise<void> {
-  // AntD's `Select` zeigt den Platzhalter als eigenes <span>, nicht als
-  // `placeholder`-Attribut des zugrunde liegenden Suchfelds — deshalb hier
-  // ueber die ARIA-Rolle statt ueber `getByPlaceholderText` angesprochen.
+const SPOOL = {
+  id: 101,
+  location: "Regal 3",
+  lot_nr: "L-1",
+  filament: FILAMENT,
+};
+
+const PRINT_JOB_BASE = {
+  id: 5,
+  spoolman_spool_id: 101,
+  printer_id: 1,
+  template_id: 1,
+  workflow_run_id: null,
+  copies: 1,
+  cups_job_id: null,
+  cups_job_state: null,
+  cups_job_state_reasons: null,
+  error_code: null,
+  error_message: null,
+  attempt_count: 1,
+  submitted_at: "2026-01-01T00:00:00Z",
+  completed_at: null,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+};
+
+function routesWithTemplatesAndPrinters(
+  ...extra: [RegExp, (url: string, init?: RequestInit) => Response][]
+): [RegExp, (url: string, init?: RequestInit) => Response][] {
+  return [
+    [/\/api\/templates$/, () => jsonResponse([TEMPLATE])],
+    [/\/api\/printers$/, () => jsonResponse([PRINTER])],
+    ...extra,
+  ];
+}
+
+async function selectExistingFilamentAndFillSpoolForm(
+  user: ReturnType<typeof setupUser>,
+): Promise<void> {
+  await user.click(screen.getByRole("radio", { name: page.entry.new }));
   const searchInput = screen.getByRole("combobox");
   await user.type(searchInput, "PLA");
   const option = await screen.findByText(/ACME.*PLA Beispiel/);
   await user.click(option);
   await waitFor(() => {
-    expect(screen.getByRole("button", { name: page.submit.next })).toBeEnabled();
+    expect(screen.getByRole("button", { name: page.submit.action })).toBeEnabled();
   });
-  await user.click(screen.getByRole("button", { name: page.submit.next }));
-
-  await screen.findByRole("button", { name: page.submit.next });
-  await user.click(screen.getByRole("button", { name: page.submit.next }));
-
-  await waitFor(() => {
-    expect(screen.getByRole("button", { name: page.submit.next })).toBeEnabled();
-  });
-  await user.click(screen.getByRole("button", { name: page.submit.next }));
 }
 
-describe("NewSpoolPage", () => {
-  it("legt eine bestehende Filament-Spule an und druckt erfolgreich", async () => {
+describe("NewSpoolPage – vorhandene Spule drucken", () => {
+  it("findet eine Spule per Suche und druckt sie mit einem Klick (Server-Standard)", async () => {
     const user = setupUser();
-    stubRoutedFetch([
-      [/\/api\/templates$/, () => jsonResponse([TEMPLATE])],
-      [/\/api\/printers$/, () => jsonResponse([PRINTER])],
-      [/\/api\/spoolman\/filaments/, () => jsonResponse([FILAMENT])],
-      [
-        /\/api\/workflows\/create-and-print$/,
-        () =>
-          jsonResponse({
-            workflow_id: 1,
-            status: "completed",
-            created_spool_ids: [101],
-            print_job_ids: [1],
-            error: null,
-          }),
-      ],
-    ]);
+    stubRoutedFetch(
+      routesWithTemplatesAndPrinters(
+        [/\/api\/spoolman\/spools\/search/, () => jsonResponse([SPOOL])],
+        [
+          /\/api\/workflows\/print-existing$/,
+          () => jsonResponse({ ...PRINT_JOB_BASE, status: "submitted" }),
+        ],
+      ),
+    );
 
     renderWithProviders(<NewSpoolPage />);
     await screen.findByRole("heading", { level: 1, name: page.title });
 
-    await goToLabelStep(user);
+    const searchInput = screen.getByRole("combobox");
+    await user.type(searchInput, "PLA");
+    const option = await screen.findByText(/#101.*ACME.*PLA Beispiel/);
+    await user.click(option);
+
+    const printButton = await screen.findByRole("button", { name: page.existing.printAction });
+    await user.click(printButton);
+
+    await screen.findByText(page.existing.printSuccess);
+  });
+
+  it("zeigt einen Druckfehler bei einer vorhandenen Spule sichtbar an", async () => {
+    const user = setupUser();
+    stubRoutedFetch(
+      routesWithTemplatesAndPrinters(
+        [/\/api\/spoolman\/spools\/search/, () => jsonResponse([SPOOL])],
+        [
+          /\/api\/workflows\/print-existing$/,
+          () =>
+            jsonResponse(
+              { ...PRINT_JOB_BASE, status: "failed", error_message: "CUPS nicht erreichbar" },
+              502,
+            ),
+        ],
+      ),
+    );
+
+    renderWithProviders(<NewSpoolPage />);
+    await screen.findByRole("heading", { level: 1, name: page.title });
+
+    const searchInput = screen.getByRole("combobox");
+    await user.type(searchInput, "PLA");
+    const option = await screen.findByText(/#101.*ACME.*PLA Beispiel/);
+    await user.click(option);
+
+    const printButton = await screen.findByRole("button", { name: page.existing.printAction });
+    await user.click(printButton);
+
+    await screen.findByText(page.existing.printFailed);
+    expect(screen.getByText("CUPS nicht erreichbar")).toBeInTheDocument();
+  });
+});
+
+describe("NewSpoolPage – neue Spule", () => {
+  it("legt eine Spule mit vorhandenem Filament an und druckt erfolgreich", async () => {
+    const user = setupUser();
+    stubRoutedFetch(
+      routesWithTemplatesAndPrinters(
+        [/\/api\/spoolman\/filaments/, () => jsonResponse([FILAMENT])],
+        [
+          /\/api\/workflows\/create-and-print$/,
+          () =>
+            jsonResponse({
+              workflow_id: 1,
+              status: "completed",
+              created_spool_ids: [101],
+              print_job_ids: [1],
+              error: null,
+            }),
+        ],
+      ),
+    );
+
+    renderWithProviders(<NewSpoolPage />);
+    await screen.findByRole("heading", { level: 1, name: page.title });
+
+    await selectExistingFilamentAndFillSpoolForm(user);
     await user.click(screen.getByRole("button", { name: page.submit.action }));
 
     await screen.findByText(page.submit.statusLabel.completed);
@@ -115,30 +201,30 @@ describe("NewSpoolPage", () => {
 
   it("zeigt einen Teilerfolg, wenn der Druck fehlschlaegt, ohne die Spule zu verlieren", async () => {
     const user = setupUser();
-    stubRoutedFetch([
-      [/\/api\/templates$/, () => jsonResponse([TEMPLATE])],
-      [/\/api\/printers$/, () => jsonResponse([PRINTER])],
-      [/\/api\/spoolman\/filaments/, () => jsonResponse([FILAMENT])],
-      [
-        /\/api\/workflows\/create-and-print$/,
-        () =>
-          jsonResponse(
-            {
-              workflow_id: 2,
-              status: "partial",
-              created_spool_ids: [202],
-              print_job_ids: [2],
-              error: null,
-            },
-            207,
-          ),
-      ],
-    ]);
+    stubRoutedFetch(
+      routesWithTemplatesAndPrinters(
+        [/\/api\/spoolman\/filaments/, () => jsonResponse([FILAMENT])],
+        [
+          /\/api\/workflows\/create-and-print$/,
+          () =>
+            jsonResponse(
+              {
+                workflow_id: 2,
+                status: "partial",
+                created_spool_ids: [202],
+                print_job_ids: [2],
+                error: null,
+              },
+              207,
+            ),
+        ],
+      ),
+    );
 
     renderWithProviders(<NewSpoolPage />);
     await screen.findByRole("heading", { level: 1, name: page.title });
 
-    await goToLabelStep(user);
+    await selectExistingFilamentAndFillSpoolForm(user);
     await user.click(screen.getByRole("button", { name: page.submit.action }));
 
     await screen.findByText(page.submit.statusLabel.partial);
@@ -149,14 +235,12 @@ describe("NewSpoolPage", () => {
   it("stapelt Zahlenfelder mit Beschriftung auf dem Handy statt addonBefore", async () => {
     matchMediaController.setMobile(true);
     const user = setupUser();
-    stubRoutedFetch([
-      [/\/api\/templates$/, () => jsonResponse([TEMPLATE])],
-      [/\/api\/printers$/, () => jsonResponse([PRINTER])],
-    ]);
+    stubRoutedFetch(routesWithTemplatesAndPrinters());
 
     renderWithProviders(<NewSpoolPage />);
     await screen.findByRole("heading", { level: 1, name: page.title });
 
+    await user.click(screen.getByRole("radio", { name: page.entry.new }));
     await user.click(screen.getByRole("radio", { name: page.filament.modeNew }));
 
     await screen.findByText(page.filament.density);
@@ -164,14 +248,13 @@ describe("NewSpoolPage", () => {
     // Breite hinaus — auf dem Handy darf dieses Konstrukt nicht vorkommen.
     expect(document.querySelector(".ant-input-number-group-addon")).not.toBeInTheDocument();
   });
+});
 
+describe("NewSpoolPage – Hinweis", () => {
   it("blendet den Hinweis nach dem Wegklicken dauerhaft aus", async () => {
     window.localStorage.clear();
     const user = setupUser();
-    stubRoutedFetch([
-      [/\/api\/templates$/, () => jsonResponse([TEMPLATE])],
-      [/\/api\/printers$/, () => jsonResponse([PRINTER])],
-    ]);
+    stubRoutedFetch(routesWithTemplatesAndPrinters());
 
     const { unmount } = renderWithProviders(<NewSpoolPage />);
     await screen.findByText(page.hint);

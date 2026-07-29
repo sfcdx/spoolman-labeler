@@ -4,6 +4,7 @@ import {
   Alert,
   Button,
   Card,
+  Collapse,
   Descriptions,
   Divider,
   Input,
@@ -11,7 +12,6 @@ import {
   Segmented,
   Space,
   Spin,
-  Steps,
   Table,
   Typography,
 } from "antd";
@@ -25,14 +25,18 @@ import {
   createVendor,
   listPrinters,
   listTemplates,
+  printExisting,
   searchFilaments,
+  searchSpools,
   searchVendors,
   toApiError,
   type LabelTemplate,
   type NewFilamentInput,
+  type PrintJob,
   type Printer,
   type SpoolFieldsInput,
   type SpoolmanFilament,
+  type SpoolmanSpool,
   type SpoolmanVendor,
   type WorkflowRunResult,
 } from "../api";
@@ -97,51 +101,141 @@ function useDebouncedSearch<T>(
   return { results, loading };
 }
 
+function spoolmanFilamentLabel(filament: SpoolmanFilament | null | undefined): string {
+  if (!filament) {
+    return "—";
+  }
+  const vendorName = filament.vendor?.name;
+  const nameOrMaterial = filament.name ?? filament.material;
+  const material = filament.name && filament.material ? ` (${filament.material})` : "";
+  return [vendorName, nameOrMaterial ? `${nameOrMaterial}${material}` : undefined]
+    .filter(Boolean)
+    .join(" – ");
+}
+
+function searchSpoolsForDebounce(query: string, signal: AbortSignal): Promise<SpoolmanSpool[]> {
+  return searchSpools(query, undefined, signal);
+}
+
+function spoolOptionLabel(spool: SpoolmanSpool): string {
+  const filamentLabel = spoolmanFilamentLabel(spool.filament);
+  return `#${spool.id} — ${filamentLabel}`;
+}
+
 interface ResultRow {
   key: number;
   spoolId: number;
 }
 
+type EntryMode = "existing" | "new";
+
+interface AdvancedPrintOptionsProps {
+  isMobile: boolean;
+  templates: LabelTemplate[];
+  printers: Printer[];
+  templateId: number | undefined;
+  onTemplateIdChange: (id: number | undefined) => void;
+  printerId: number | undefined;
+  onPrinterIdChange: (id: number | undefined) => void;
+  copies: number | undefined;
+  onCopiesChange: (copies: number | undefined) => void;
+}
+
+/** Optionales Panel zum Überschreiben der automatisch gewählten Standard-Vorlage/-Drucker. */
+function AdvancedPrintOptions({
+  isMobile,
+  templates,
+  printers,
+  templateId,
+  onTemplateIdChange,
+  printerId,
+  onPrinterIdChange,
+  copies,
+  onCopiesChange,
+}: AdvancedPrintOptionsProps): React.JSX.Element {
+  return (
+    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+      <Typography.Text type="secondary">{page.advanced.auto}</Typography.Text>
+
+      {templates.length === 0 ? (
+        <Alert
+          type="warning"
+          showIcon
+          message={page.advanced.noTemplates}
+          action={
+            <Link to="/templates">
+              <Button size="small">{page.advanced.goToTemplates}</Button>
+            </Link>
+          }
+        />
+      ) : (
+        <Select
+          size="large"
+          allowClear
+          style={{ width: "100%" }}
+          placeholder={page.advanced.template}
+          value={templateId}
+          onChange={onTemplateIdChange}
+          options={templates.map((template) => ({
+            value: template.id,
+            label: `${template.name} (${template.width_mm}×${template.height_mm} mm)`,
+          }))}
+        />
+      )}
+
+      {printers.length === 0 ? (
+        <Alert
+          type="warning"
+          showIcon
+          message={page.advanced.noPrinters}
+          action={
+            <Link to="/settings">
+              <Button size="small">{page.advanced.goToSettings}</Button>
+            </Link>
+          }
+        />
+      ) : (
+        <Select
+          size="large"
+          allowClear
+          style={{ width: "100%" }}
+          placeholder={page.advanced.printer}
+          value={printerId}
+          onChange={onPrinterIdChange}
+          options={printers.map((printer) => ({
+            value: printer.id,
+            label: printer.name,
+          }))}
+        />
+      )}
+
+      <LabeledNumber
+        label={page.advanced.copies}
+        mobile={isMobile}
+        min={1}
+        max={100}
+        value={copies}
+        onChange={(value) => {
+          onCopiesChange(value ?? undefined);
+        }}
+      />
+    </Space>
+  );
+}
+
 export function NewSpoolPage(): React.JSX.Element {
   const isMobile = useIsMobile();
-  const [current, setCurrent] = useState(0);
   const [hintDismissed, setHintDismissed] = useState(readHintDismissed);
+  const [mode, setMode] = useState<EntryMode>("existing");
 
-  // Schritt 1: Filament
-  const [filamentMode, setFilamentMode] = useState<"existing" | "new">("existing");
-  const [filamentQuery, setFilamentQuery] = useState("");
-  const [selectedFilament, setSelectedFilament] = useState<SpoolmanFilament | undefined>();
-  const { results: filamentResults, loading: filamentSearchLoading } = useDebouncedSearch(
-    filamentQuery,
-    searchFilaments,
-  );
-  const [newFilament, setNewFilament] = useState<NewFilamentInput>({
-    density: 1.24,
-    diameter: 1.75,
-  });
-  const [vendorQuery, setVendorQuery] = useState("");
-  const [selectedVendor, setSelectedVendor] = useState<SpoolmanVendor | undefined>();
-  const { results: vendorResults, loading: vendorSearchLoading } = useDebouncedSearch(
-    vendorQuery,
-    searchVendors,
-  );
-
-  // Schritt 2: Spulendaten
-  const [quantity, setQuantity] = useState(1);
-  const [spoolFields, setSpoolFields] = useState<SpoolFieldsInput>({});
-
-  // Schritt 3: Etikett
+  // Drucker/Vorlagen — gemeinsam fuer beide Einstiegspfade geladen, damit ein
+  // Klick zum Drucken reicht: der Server loest ohne explizite Auswahl die
+  // hinterlegten Standardwerte auf.
   const [templates, setTemplates] = useState<LabelTemplate[]>([]);
   const [printers, setPrinters] = useState<Printer[]>([]);
   const [templateId, setTemplateId] = useState<number | undefined>();
   const [printerId, setPrinterId] = useState<number | undefined>();
   const [copies, setCopies] = useState<number | undefined>();
-
-  // Schritt 4: Absenden
-  const [idempotencyKey, setIdempotencyKey] = useState(generateIdempotencyKey);
-  const [submitting, setSubmitting] = useState(false);
-  const [result, setResult] = useState<WorkflowRunResult | undefined>();
-  const [submitErrorMessage, setSubmitErrorMessage] = useState<string | undefined>();
 
   useEffect(() => {
     const controller = new AbortController();
@@ -164,19 +258,78 @@ export function NewSpoolPage(): React.JSX.Element {
     };
   }, []);
 
-  // Vorbelegung ohne Effekt: Solange die Nutzerin keine eigene Wahl trifft
-  // (templateId/printerId bleiben `undefined`), gilt die erste Standard- bzw.
-  // erste verfügbare Option als effektiv ausgewählt.
-  const effectiveTemplateId =
-    templateId ?? templates.find((template) => template.is_default)?.id ?? templates[0]?.id;
-  const effectivePrinterId =
-    printerId ?? printers.find((printer) => printer.is_default)?.id ?? printers[0]?.id;
+  // Vorhandene Spule: Suche + Direktdruck.
+  const [spoolQuery, setSpoolQuery] = useState("");
+  const [selectedSpool, setSelectedSpool] = useState<SpoolmanSpool | undefined>();
+  const { results: spoolResults, loading: spoolSearchLoading } = useDebouncedSearch(
+    spoolQuery,
+    searchSpoolsForDebounce,
+  );
+  const [existingAdvancedOpen, setExistingAdvancedOpen] = useState(false);
+  const [existingPrinting, setExistingPrinting] = useState(false);
+  const [existingPrintJob, setExistingPrintJob] = useState<PrintJob | undefined>();
+  const [existingPrintError, setExistingPrintError] = useState<string | undefined>();
+
+  async function handlePrintExisting(): Promise<void> {
+    if (!selectedSpool) {
+      return;
+    }
+    setExistingPrinting(true);
+    setExistingPrintError(undefined);
+    try {
+      const job = await printExisting({
+        spool_id: selectedSpool.id,
+        ...(templateId ? { template_id: templateId } : {}),
+        ...(printerId ? { printer_id: printerId } : {}),
+        ...(copies ? { copies } : {}),
+      });
+      setExistingPrintJob(job);
+    } catch (cause) {
+      setExistingPrintError(toApiError(cause).message);
+    } finally {
+      setExistingPrinting(false);
+    }
+  }
+
+  function handleSearchAgain(): void {
+    setSelectedSpool(undefined);
+    setSpoolQuery("");
+    setExistingPrintJob(undefined);
+    setExistingPrintError(undefined);
+  }
+
+  // Neue Spule: Filament + Spulendaten.
+  const [filamentMode, setFilamentMode] = useState<"existing" | "new">("existing");
+  const [filamentQuery, setFilamentQuery] = useState("");
+  const [selectedFilament, setSelectedFilament] = useState<SpoolmanFilament | undefined>();
+  const { results: filamentResults, loading: filamentSearchLoading } = useDebouncedSearch(
+    filamentQuery,
+    searchFilaments,
+  );
+  const [newFilament, setNewFilament] = useState<NewFilamentInput>({
+    density: 1.24,
+    diameter: 1.75,
+  });
+  const [vendorQuery, setVendorQuery] = useState("");
+  const [selectedVendor, setSelectedVendor] = useState<SpoolmanVendor | undefined>();
+  const { results: vendorResults, loading: vendorSearchLoading } = useDebouncedSearch(
+    vendorQuery,
+    searchVendors,
+  );
+
+  const [quantity, setQuantity] = useState(1);
+  const [spoolFields, setSpoolFields] = useState<SpoolFieldsInput>({});
+  const [newAdvancedOpen, setNewAdvancedOpen] = useState(false);
+
+  const [idempotencyKey, setIdempotencyKey] = useState(generateIdempotencyKey);
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<WorkflowRunResult | undefined>();
+  const [submitErrorMessage, setSubmitErrorMessage] = useState<string | undefined>();
 
   const filamentReady =
     filamentMode === "existing"
       ? selectedFilament !== undefined
       : newFilament.density > 0 && newFilament.diameter > 0;
-  const labelReady = effectiveTemplateId !== undefined && effectivePrinterId !== undefined;
 
   async function resolveVendorId(): Promise<number | undefined> {
     if (selectedVendor) {
@@ -190,7 +343,7 @@ export function NewSpoolPage(): React.JSX.Element {
   }
 
   async function handleSubmit(): Promise<void> {
-    if (!labelReady || effectiveTemplateId === undefined || effectivePrinterId === undefined) {
+    if (!filamentReady) {
       return;
     }
     setSubmitting(true);
@@ -206,8 +359,8 @@ export function NewSpoolPage(): React.JSX.Element {
         ...filamentInput,
         spool: spoolFields,
         quantity,
-        template_id: effectiveTemplateId,
-        printer_id: effectivePrinterId,
+        ...(templateId ? { template_id: templateId } : {}),
+        ...(printerId ? { printer_id: printerId } : {}),
         ...(copies ? { copies } : {}),
       });
       setResult(response);
@@ -219,12 +372,13 @@ export function NewSpoolPage(): React.JSX.Element {
   }
 
   function handleReset(): void {
-    setCurrent(0);
     setResult(undefined);
     setSubmitErrorMessage(undefined);
     setIdempotencyKey(generateIdempotencyKey());
     setSelectedFilament(undefined);
     setFilamentQuery("");
+    setSelectedVendor(undefined);
+    setVendorQuery("");
     setSpoolFields({});
     setQuantity(1);
   }
@@ -237,22 +391,22 @@ export function NewSpoolPage(): React.JSX.Element {
     { key: "spoolId", dataIndex: "spoolId", title: "Spoolman-ID" },
   ];
 
+  const advancedProps: Omit<AdvancedPrintOptionsProps, "isMobile"> = {
+    templates,
+    printers,
+    templateId,
+    onTemplateIdChange: setTemplateId,
+    printerId,
+    onPrinterIdChange: setPrinterId,
+    copies,
+    onCopiesChange: setCopies,
+  };
+
   return (
     <>
       <PageHeading title={page.title} subtitle={page.subtitle} />
 
       <Space direction="vertical" size="large" style={{ width: "100%" }}>
-        <Steps
-          current={current}
-          responsive
-          items={[
-            { title: page.steps.filament },
-            { title: page.steps.spool },
-            { title: page.steps.label },
-            { title: page.steps.print },
-          ]}
-        />
-
         {!hintDismissed ? (
           <Alert
             type="info"
@@ -272,10 +426,143 @@ export function NewSpoolPage(): React.JSX.Element {
           />
         ) : null}
 
-        {current === 0 ? (
-          <Card title={page.steps.filament}>
+        <Segmented
+          size="large"
+          block={isMobile}
+          value={mode}
+          onChange={(value) => {
+            setMode(value as EntryMode);
+          }}
+          options={[
+            { label: page.entry.existing, value: "existing" },
+            { label: page.entry.new, value: "new" },
+          ]}
+        />
+        <Typography.Text type="secondary">
+          {mode === "existing" ? page.entry.existingHint : page.entry.newHint}
+        </Typography.Text>
+
+        {mode === "existing" ? (
+          <Card title={page.entry.existing}>
             <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+              <Select
+                showSearch
+                allowClear
+                size="large"
+                style={{ width: "100%" }}
+                placeholder={page.existing.searchPlaceholder}
+                value={selectedSpool?.id}
+                filterOption={false}
+                notFoundContent={spoolSearchLoading ? <Spin size="small" /> : null}
+                onSearch={setSpoolQuery}
+                onChange={(value) => {
+                  setSelectedSpool(spoolResults.find((spool) => spool.id === value));
+                  setExistingPrintJob(undefined);
+                  setExistingPrintError(undefined);
+                }}
+                options={spoolResults.map((spool) => ({
+                  value: spool.id,
+                  label: spoolOptionLabel(spool),
+                }))}
+              />
+
+              {selectedSpool ? (
+                <>
+                  <Descriptions
+                    size="small"
+                    column={1}
+                    bordered
+                    title={page.existing.selectedTitle}
+                  >
+                    <Descriptions.Item label={page.existing.spoolId}>
+                      {selectedSpool.id}
+                    </Descriptions.Item>
+                    <Descriptions.Item label={page.existing.material}>
+                      <Space>
+                        {selectedSpool.filament?.color_hex ? (
+                          <span
+                            aria-hidden="true"
+                            style={{
+                              display: "inline-block",
+                              width: 12,
+                              height: 12,
+                              borderRadius: "50%",
+                              background: `#${selectedSpool.filament.color_hex}`,
+                              border: "1px solid rgba(0,0,0,0.15)",
+                            }}
+                          />
+                        ) : null}
+                        {spoolmanFilamentLabel(selectedSpool.filament)}
+                      </Space>
+                    </Descriptions.Item>
+                    <Descriptions.Item label={page.existing.location}>
+                      {selectedSpool.location ?? "—"}
+                    </Descriptions.Item>
+                  </Descriptions>
+
+                  {existingPrintError ? (
+                    <Alert type="error" showIcon message={existingPrintError} />
+                  ) : null}
+
+                  {existingPrintJob ? (
+                    existingPrintJob.status === "failed" ? (
+                      <Alert
+                        type="error"
+                        showIcon
+                        message={page.existing.printFailed}
+                        description={existingPrintJob.error_message}
+                      />
+                    ) : (
+                      <Alert type="success" showIcon message={page.existing.printSuccess} />
+                    )
+                  ) : null}
+
+                  <Collapse
+                    ghost
+                    activeKey={existingAdvancedOpen ? ["advanced"] : []}
+                    onChange={(keys) => {
+                      setExistingAdvancedOpen(
+                        Array.isArray(keys) ? keys.includes("advanced") : keys === "advanced",
+                      );
+                    }}
+                    items={[
+                      {
+                        key: "advanced",
+                        label: page.advanced.toggle,
+                        children: <AdvancedPrintOptions isMobile={isMobile} {...advancedProps} />,
+                      },
+                    ]}
+                  />
+
+                  <Divider style={{ margin: "4px 0" }} />
+                  <Space wrap>
+                    <Button onClick={handleSearchAgain}>{page.existing.searchAgain}</Button>
+                    <Button
+                      type="primary"
+                      size="large"
+                      loading={existingPrinting}
+                      onClick={() => void handlePrintExisting()}
+                    >
+                      {existingPrinting
+                        ? page.existing.printing
+                        : existingPrintJob
+                          ? page.existing.printAgain
+                          : page.existing.printAction}
+                    </Button>
+                  </Space>
+                </>
+              ) : (
+                <Typography.Text type="secondary">{page.existing.none}</Typography.Text>
+              )}
+            </Space>
+          </Card>
+        ) : (
+          <Card title={page.entry.new}>
+            <Space direction="vertical" size="large" style={{ width: "100%" }}>
+              <Typography.Title level={5}>{page.filament.sectionTitle}</Typography.Title>
               <Segmented
+                size="large"
+                block={isMobile}
                 value={filamentMode}
                 onChange={(value) => {
                   setFilamentMode(value as "existing" | "new");
@@ -287,10 +574,11 @@ export function NewSpoolPage(): React.JSX.Element {
               />
 
               {filamentMode === "existing" ? (
-                <>
+                <Space direction="vertical" size="middle" style={{ width: "100%" }}>
                   <Select
                     showSearch
                     allowClear
+                    size="large"
                     style={{ width: "100%" }}
                     placeholder={page.filament.searchPlaceholder}
                     value={selectedFilament?.id}
@@ -321,12 +609,13 @@ export function NewSpoolPage(): React.JSX.Element {
                   ) : (
                     <Typography.Text type="secondary">{page.filament.none}</Typography.Text>
                   )}
-                </>
+                </Space>
               ) : (
                 <Space direction="vertical" size="middle" style={{ width: "100%" }}>
                   <Select
                     showSearch
                     allowClear
+                    size="large"
                     style={{ width: "100%" }}
                     placeholder={page.filament.vendorPlaceholder}
                     value={selectedVendor?.id}
@@ -347,6 +636,7 @@ export function NewSpoolPage(): React.JSX.Element {
                     </Typography.Text>
                   ) : null}
                   <Input
+                    size="large"
                     placeholder={page.filament.name}
                     value={newFilament.name ?? ""}
                     onChange={(event) => {
@@ -354,6 +644,7 @@ export function NewSpoolPage(): React.JSX.Element {
                     }}
                   />
                   <Input
+                    size="large"
                     placeholder={page.filament.material}
                     value={newFilament.material ?? ""}
                     onChange={(event) => {
@@ -361,6 +652,7 @@ export function NewSpoolPage(): React.JSX.Element {
                     }}
                   />
                   <Input
+                    size="large"
                     placeholder={page.filament.colorHex}
                     maxLength={8}
                     value={newFilament.color_hex ?? ""}
@@ -394,22 +686,8 @@ export function NewSpoolPage(): React.JSX.Element {
               )}
 
               <Divider style={{ margin: "4px 0" }} />
-              <Button
-                type="primary"
-                disabled={!filamentReady}
-                onClick={() => {
-                  setCurrent(1);
-                }}
-              >
-                {page.submit.next}
-              </Button>
-            </Space>
-          </Card>
-        ) : null}
 
-        {current === 1 ? (
-          <Card title={page.steps.spool}>
-            <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+              <Typography.Title level={5}>{page.spool.sectionTitle}</Typography.Title>
               <LabeledNumber
                 label={page.spool.quantity}
                 mobile={isMobile}
@@ -422,6 +700,7 @@ export function NewSpoolPage(): React.JSX.Element {
               />
               <Typography.Text type="secondary">{page.spool.quantityHint}</Typography.Text>
               <Input
+                size="large"
                 placeholder={page.spool.location}
                 value={spoolFields.location ?? ""}
                 onChange={(event) => {
@@ -429,6 +708,7 @@ export function NewSpoolPage(): React.JSX.Element {
                 }}
               />
               <Input
+                size="large"
                 placeholder={page.spool.lotNr}
                 value={spoolFields.lot_nr ?? ""}
                 onChange={(event) => {
@@ -464,142 +744,42 @@ export function NewSpoolPage(): React.JSX.Element {
               </Space>
 
               <Divider style={{ margin: "4px 0" }} />
-              <Space wrap>
-                <Button
-                  onClick={() => {
-                    setCurrent(0);
-                  }}
-                >
-                  {page.submit.back}
-                </Button>
-                <Button
-                  type="primary"
-                  onClick={() => {
-                    setCurrent(2);
-                  }}
-                >
-                  {page.submit.next}
-                </Button>
-              </Space>
-            </Space>
-          </Card>
-        ) : null}
 
-        {current === 2 ? (
-          <Card title={page.steps.label}>
-            <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-              {templates.length === 0 ? (
-                <Alert
-                  type="warning"
-                  showIcon
-                  message={page.label.noTemplates}
-                  action={
-                    <Link to="/templates">
-                      <Button size="small">{page.label.goToTemplates}</Button>
-                    </Link>
-                  }
-                />
-              ) : (
-                <Select
-                  style={{ width: "100%" }}
-                  placeholder={page.label.template}
-                  value={effectiveTemplateId}
-                  onChange={setTemplateId}
-                  options={templates.map((template) => ({
-                    value: template.id,
-                    label: `${template.name} (${template.width_mm}×${template.height_mm} mm)`,
-                  }))}
-                />
-              )}
-
-              {printers.length === 0 ? (
-                <Alert
-                  type="warning"
-                  showIcon
-                  message={page.label.noPrinters}
-                  action={
-                    <Link to="/settings">
-                      <Button size="small">{page.label.goToSettings}</Button>
-                    </Link>
-                  }
-                />
-              ) : (
-                <Select
-                  style={{ width: "100%" }}
-                  placeholder={page.label.printer}
-                  value={effectivePrinterId}
-                  onChange={setPrinterId}
-                  options={printers.map((printer) => ({
-                    value: printer.id,
-                    label: printer.name,
-                  }))}
-                />
-              )}
-
-              <LabeledNumber
-                label={page.label.copies}
-                mobile={isMobile}
-                min={1}
-                max={100}
-                value={copies}
-                onChange={(value) => {
-                  setCopies(value ?? undefined);
-                }}
-              />
-
-              <Divider style={{ margin: "4px 0" }} />
-              <Space wrap>
-                <Button
-                  onClick={() => {
-                    setCurrent(1);
-                  }}
-                >
-                  {page.submit.back}
-                </Button>
-                <Button
-                  type="primary"
-                  disabled={!labelReady}
-                  onClick={() => {
-                    setCurrent(3);
-                  }}
-                >
-                  {page.submit.next}
-                </Button>
-              </Space>
-            </Space>
-          </Card>
-        ) : null}
-
-        {current === 3 ? (
-          <Card title={page.steps.print}>
-            <Space direction="vertical" size="middle" style={{ width: "100%" }}>
               {!result ? (
-                <>
+                <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+                  <Collapse
+                    ghost
+                    activeKey={newAdvancedOpen ? ["advanced"] : []}
+                    onChange={(keys) => {
+                      setNewAdvancedOpen(
+                        Array.isArray(keys) ? keys.includes("advanced") : keys === "advanced",
+                      );
+                    }}
+                    items={[
+                      {
+                        key: "advanced",
+                        label: page.advanced.toggle,
+                        children: <AdvancedPrintOptions isMobile={isMobile} {...advancedProps} />,
+                      },
+                    ]}
+                  />
+
                   {submitErrorMessage ? (
                     <Alert type="error" showIcon message={submitErrorMessage} />
                   ) : null}
-                  <Space wrap>
-                    <Button
-                      disabled={submitting}
-                      onClick={() => {
-                        setCurrent(2);
-                      }}
-                    >
-                      {page.submit.back}
-                    </Button>
-                    <Button
-                      type="primary"
-                      loading={submitting}
-                      onClick={() => {
-                        void handleSubmit();
-                      }}
-                    >
-                      {submitting ? page.submit.submitting : page.submit.action}
-                    </Button>
-                  </Space>
-                </>
+
+                  <Button
+                    type="primary"
+                    size="large"
+                    disabled={!filamentReady}
+                    loading={submitting}
+                    onClick={() => void handleSubmit()}
+                  >
+                    {submitting ? page.submit.submitting : page.submit.action}
+                  </Button>
+                </Space>
               ) : (
-                <>
+                <Space direction="vertical" size="middle" style={{ width: "100%" }}>
                   {result.status === "completed" ? (
                     <Alert type="success" showIcon message={page.submit.statusLabel.completed} />
                   ) : null}
@@ -643,11 +823,11 @@ export function NewSpoolPage(): React.JSX.Element {
                       {page.submit.again}
                     </Button>
                   </Space>
-                </>
+                </Space>
               )}
             </Space>
           </Card>
-        ) : null}
+        )}
       </Space>
     </>
   );
