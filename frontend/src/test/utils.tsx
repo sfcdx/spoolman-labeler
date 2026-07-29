@@ -60,7 +60,53 @@ export function stubFetch(
   return mock;
 }
 
-/** Bequemer Standard: jede Anfrage liefert einen gesunden Systemstatus. */
+/** Ein Eintrag fuer {@link stubRoutedFetch}: Muster gegen die URL, Antwortfunktion. */
+export type FetchRoute = [
+  RegExp,
+  (url: string, init?: RequestInit) => Response | Promise<Response>,
+];
+
+/**
+ * Fetch-Attrappe mit mehreren Routen, in Reihenfolge geprueft.
+ *
+ * Fuer Seiten, die mehrere unterschiedliche Endpunkte aufrufen (z. B. Vorlagen
+ * laden UND eine neue Vorlage anlegen) reicht eine einzelne Antwort nicht
+ * mehr aus. Eine nicht passende Anfrage liefert 404 statt undefiniert zu
+ * bleiben, damit ein fehlendes Mock in der Testausgabe sichtbar wird.
+ */
+export function stubRoutedFetch(routes: FetchRoute[]): ReturnType<typeof vi.fn> {
+  return stubFetch((input, init) => {
+    const url = typeof input === "string" ? input : input.toString();
+    const match = routes.find(([pattern]) => pattern.test(url));
+    if (!match) {
+      return Promise.resolve(
+        jsonResponse({ error: { code: "NOT_FOUND", message: `Kein Mock für ${url}` } }, 404),
+      );
+    }
+    return Promise.resolve(match[1](url, init));
+  });
+}
+
+/**
+ * Bequemer Standard fuer Seiten, die neben dem Systemstatus auch Listen laden
+ * (Vorlagen, Drucker, Druckhistorie). Ohne Endpunkt-Unterscheidung wuerde
+ * jede dieser Anfragen faelschlich den Health-Payload erhalten — kein Array,
+ * wodurch `.find`/`.map` in den Seiten mit einer Ausnahme abbrechen wuerde.
+ */
 export function stubHealthyFetch(): ReturnType<typeof vi.fn> {
-  return stubFetch(() => Promise.resolve(jsonResponse(healthyPayload)));
+  return stubFetch((input) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("/api/health")) {
+      return Promise.resolve(jsonResponse(healthyPayload));
+    }
+    if (
+      url.includes("/api/templates") ||
+      url.includes("/api/printers") ||
+      url.includes("/api/print-jobs") ||
+      url.includes("/api/spoolman/")
+    ) {
+      return Promise.resolve(jsonResponse([]));
+    }
+    return Promise.resolve(jsonResponse({}));
+  });
 }
