@@ -1,19 +1,9 @@
 import { useEffect, useState } from "react";
 import { PlusOutlined } from "@ant-design/icons";
-import {
-  Alert,
-  Button,
-  Card,
-  Empty,
-  Input,
-  InputNumber,
-  List,
-  Modal,
-  Space,
-  Tag,
-  Typography,
-} from "antd";
+import { Alert, Button, Card, Empty, Input, List, Modal, Space, Tag, Typography } from "antd";
 import { PageHeading } from "./PageHeading";
+import { LabeledNumber } from "../components/LabeledNumber";
+import { useIsMobile } from "../hooks/useMediaQuery";
 import { texts } from "../texts/de";
 import {
   createTemplate,
@@ -47,6 +37,7 @@ function openPreview(blob: Blob): void {
 }
 
 export function TemplatesPage(): React.JSX.Element {
+  const isMobile = useIsMobile();
   const [templates, setTemplates] = useState<LabelTemplate[]>([]);
   const [loadError, setLoadError] = useState<string | undefined>();
 
@@ -182,7 +173,7 @@ export function TemplatesPage(): React.JSX.Element {
         title={page.title}
         subtitle={page.subtitle}
         extra={
-          <Space>
+          <Space wrap>
             <Button
               onClick={() => {
                 setImportOpen(true);
@@ -219,6 +210,7 @@ export function TemplatesPage(): React.JSX.Element {
           ) : (
             <List
               dataSource={templates}
+              itemLayout={isMobile ? "vertical" : "horizontal"}
               renderItem={(template) => (
                 <List.Item
                   actions={[
@@ -288,7 +280,7 @@ export function TemplatesPage(): React.JSX.Element {
         okText={page.actions.save}
         cancelText={page.actions.cancel}
         confirmLoading={saving}
-        width={720}
+        width={isMobile ? "94%" : 720}
       >
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
           {formError ? <Alert type="error" showIcon message={formError} /> : null}
@@ -306,17 +298,19 @@ export function TemplatesPage(): React.JSX.Element {
               setForm({ ...form, description: event.target.value || undefined });
             }}
           />
-          <Space>
-            <InputNumber
-              addonBefore={page.fields.width}
+          <Space direction={isMobile ? "vertical" : "horizontal"} style={{ width: "100%" }}>
+            <LabeledNumber
+              label={page.fields.width}
+              mobile={isMobile}
               min={1}
               value={form.width_mm}
               onChange={(value) => {
                 setForm({ ...form, width_mm: value ?? form.width_mm });
               }}
             />
-            <InputNumber
-              addonBefore={page.fields.height}
+            <LabeledNumber
+              label={page.fields.height}
+              mobile={isMobile}
               min={1}
               value={form.height_mm}
               onChange={(value) => {
@@ -354,6 +348,7 @@ export function TemplatesPage(): React.JSX.Element {
         onOk={() => void handleImport()}
         okText={page.actions.importSpoolman}
         cancelText={page.actions.cancel}
+        width={isMobile ? "94%" : undefined}
       >
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
           <Typography.Text type="secondary">{page.importHint}</Typography.Text>

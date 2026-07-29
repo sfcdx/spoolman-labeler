@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import { NewSpoolPage } from "./NewSpoolPage";
+import { matchMediaController } from "../test/matchMedia";
 import { jsonResponse, renderWithProviders, setupUser, stubRoutedFetch } from "../test/utils";
 import { texts } from "../texts/de";
 
@@ -143,5 +144,24 @@ describe("NewSpoolPage", () => {
     await screen.findByText(page.submit.statusLabel.partial);
     expect(screen.getByText("202")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: page.submit.goToHistory })).toBeInTheDocument();
+  });
+
+  it("stapelt Zahlenfelder mit Beschriftung auf dem Handy statt addonBefore", async () => {
+    matchMediaController.setMobile(true);
+    const user = setupUser();
+    stubRoutedFetch([
+      [/\/api\/templates$/, () => jsonResponse([TEMPLATE])],
+      [/\/api\/printers$/, () => jsonResponse([PRINTER])],
+    ]);
+
+    renderWithProviders(<NewSpoolPage />);
+    await screen.findByRole("heading", { level: 1, name: page.title });
+
+    await user.click(screen.getByRole("radio", { name: page.filament.modeNew }));
+
+    await screen.findByText(page.filament.density);
+    // `addonBefore` waechst auf schmalen Bildschirmen ueber die verfuegbare
+    // Breite hinaus — auf dem Handy darf dieses Konstrukt nicht vorkommen.
+    expect(document.querySelector(".ant-input-number-group-addon")).not.toBeInTheDocument();
   });
 });

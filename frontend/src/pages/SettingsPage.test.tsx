@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import { SettingsPage } from "./SettingsPage";
+import { matchMediaController } from "../test/matchMedia";
 import { jsonResponse, renderWithProviders, setupUser, stubRoutedFetch } from "../test/utils";
 import { texts } from "../texts/de";
 
@@ -89,5 +90,15 @@ describe("SettingsPage", () => {
     await user.click(screen.getByRole("button", { name: page.printers.test }));
 
     await screen.findByText("ok");
+  });
+
+  it("stapelt Listeneintraege auf dem Handy statt sie nebeneinander zu zeigen", async () => {
+    matchMediaController.setMobile(true);
+    stubRoutedFetch([[/\/api\/printers$/, () => jsonResponse([PRINTER])]]);
+
+    renderWithProviders(<SettingsPage />);
+
+    await screen.findByText(PRINTER.name);
+    expect(document.querySelector(".ant-list-vertical")).toBeInTheDocument();
   });
 });

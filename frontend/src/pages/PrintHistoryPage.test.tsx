@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import { PrintHistoryPage } from "./PrintHistoryPage";
+import { matchMediaController } from "../test/matchMedia";
 import { jsonResponse, renderWithProviders, setupUser, stubRoutedFetch } from "../test/utils";
 import { texts } from "../texts/de";
 
@@ -77,5 +78,16 @@ describe("PrintHistoryPage", () => {
     await waitFor(() => {
       expect(retried).toBe(true);
     });
+  });
+
+  it("zeigt auf dem Handy eine Kartenliste statt der Tabelle", async () => {
+    matchMediaController.setMobile(true);
+    stubRoutedFetch([[/\/api\/print-jobs/, () => jsonResponse([FAILED_JOB])]]);
+
+    renderWithProviders(<PrintHistoryPage />);
+
+    await screen.findByText(page.spoolLabel(42));
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: page.retry })).toBeInTheDocument();
   });
 });

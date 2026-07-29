@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import { TemplatesPage } from "./TemplatesPage";
+import { matchMediaController } from "../test/matchMedia";
 import { jsonResponse, renderWithProviders, setupUser, stubRoutedFetch } from "../test/utils";
 import { texts } from "../texts/de";
 
@@ -77,5 +78,15 @@ describe("TemplatesPage", () => {
       expect(created).toBe(true);
     });
     await screen.findByText("Eigene Vorlage");
+  });
+
+  it("stapelt Listeneintraege auf dem Handy statt sie nebeneinander zu zeigen", async () => {
+    matchMediaController.setMobile(true);
+    stubRoutedFetch([[/\/api\/templates$/, () => jsonResponse([BUILTIN_TEMPLATE])]]);
+
+    renderWithProviders(<TemplatesPage />);
+
+    await screen.findByText(BUILTIN_TEMPLATE.name);
+    expect(document.querySelector(".ant-list-vertical")).toBeInTheDocument();
   });
 });

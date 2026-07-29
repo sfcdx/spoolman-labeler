@@ -7,7 +7,6 @@ import {
   Descriptions,
   Empty,
   Input,
-  InputNumber,
   List,
   Modal,
   Space,
@@ -16,6 +15,8 @@ import {
   Typography,
 } from "antd";
 import { PageHeading } from "./PageHeading";
+import { LabeledNumber } from "../components/LabeledNumber";
+import { useIsMobile } from "../hooks/useMediaQuery";
 import { texts } from "../texts/de";
 import {
   createPrinter,
@@ -39,6 +40,7 @@ const EMPTY_FORM: PrinterInput = {
 };
 
 export function SettingsPage(): React.JSX.Element {
+  const isMobile = useIsMobile();
   const [printers, setPrinters] = useState<Printer[]>([]);
   const [loadError, setLoadError] = useState<string | undefined>();
 
@@ -158,6 +160,7 @@ export function SettingsPage(): React.JSX.Element {
           ) : (
             <List
               dataSource={printers}
+              itemLayout={isMobile ? "vertical" : "horizontal"}
               renderItem={(printer) => (
                 <List.Item
                   actions={[
@@ -249,6 +252,7 @@ export function SettingsPage(): React.JSX.Element {
         okText={page.printers.save}
         cancelText={page.printers.cancel}
         confirmLoading={saving}
+        width={isMobile ? "94%" : undefined}
       >
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
           {formError ? <Alert type="error" showIcon message={formError} /> : null}
@@ -280,17 +284,19 @@ export function SettingsPage(): React.JSX.Element {
               setForm({ ...form, model: event.target.value || undefined });
             }}
           />
-          <Space>
-            <InputNumber
-              addonBefore={page.fields.labelWidth}
+          <Space direction={isMobile ? "vertical" : "horizontal"} style={{ width: "100%" }}>
+            <LabeledNumber
+              label={page.fields.labelWidth}
+              mobile={isMobile}
               min={1}
               value={form.label_width_mm}
               onChange={(value) => {
                 setForm({ ...form, label_width_mm: value ?? form.label_width_mm });
               }}
             />
-            <InputNumber
-              addonBefore={page.fields.labelHeight}
+            <LabeledNumber
+              label={page.fields.labelHeight}
+              mobile={isMobile}
               min={1}
               value={form.label_height_mm}
               onChange={(value) => {
@@ -298,8 +304,9 @@ export function SettingsPage(): React.JSX.Element {
               }}
             />
           </Space>
-          <InputNumber
-            addonBefore={page.fields.copies}
+          <LabeledNumber
+            label={page.fields.copies}
+            mobile={isMobile}
             min={1}
             value={form.copies}
             onChange={(value) => {

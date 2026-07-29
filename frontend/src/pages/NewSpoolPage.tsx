@@ -7,7 +7,6 @@ import {
   Descriptions,
   Divider,
   Input,
-  InputNumber,
   Select,
   Segmented,
   Space,
@@ -18,6 +17,8 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { PageHeading } from "./PageHeading";
+import { LabeledNumber } from "../components/LabeledNumber";
+import { useIsMobile } from "../hooks/useMediaQuery";
 import { texts } from "../texts/de";
 import {
   createAndPrint,
@@ -91,6 +92,7 @@ interface ResultRow {
 }
 
 export function NewSpoolPage(): React.JSX.Element {
+  const isMobile = useIsMobile();
   const [current, setCurrent] = useState(0);
 
   // Schritt 1: Filament
@@ -337,9 +339,10 @@ export function NewSpoolPage(): React.JSX.Element {
                       setNewFilament({ ...newFilament, color_hex: event.target.value });
                     }}
                   />
-                  <Space>
-                    <InputNumber
-                      addonBefore={page.filament.density}
+                  <Space direction={isMobile ? "vertical" : "horizontal"} style={{ width: "100%" }}>
+                    <LabeledNumber
+                      label={page.filament.density}
+                      mobile={isMobile}
                       min={0.1}
                       step={0.01}
                       value={newFilament.density}
@@ -347,8 +350,9 @@ export function NewSpoolPage(): React.JSX.Element {
                         setNewFilament({ ...newFilament, density: value ?? 0 });
                       }}
                     />
-                    <InputNumber
-                      addonBefore={page.filament.diameter}
+                    <LabeledNumber
+                      label={page.filament.diameter}
+                      mobile={isMobile}
                       min={0.1}
                       step={0.01}
                       value={newFilament.diameter}
@@ -377,8 +381,9 @@ export function NewSpoolPage(): React.JSX.Element {
         {current === 1 ? (
           <Card title={page.steps.spool}>
             <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-              <InputNumber
-                addonBefore={page.spool.quantity}
+              <LabeledNumber
+                label={page.spool.quantity}
+                mobile={isMobile}
                 min={1}
                 max={MAX_QUANTITY}
                 value={quantity}
@@ -408,17 +413,19 @@ export function NewSpoolPage(): React.JSX.Element {
                   setSpoolFields({ ...spoolFields, comment: event.target.value || undefined });
                 }}
               />
-              <Space>
-                <InputNumber
-                  addonBefore={page.spool.initialWeight}
+              <Space direction={isMobile ? "vertical" : "horizontal"} style={{ width: "100%" }}>
+                <LabeledNumber
+                  label={page.spool.initialWeight}
+                  mobile={isMobile}
                   min={0}
                   value={spoolFields.initial_weight ?? undefined}
                   onChange={(value) => {
                     setSpoolFields({ ...spoolFields, initial_weight: value ?? undefined });
                   }}
                 />
-                <InputNumber
-                  addonBefore={page.spool.spoolWeight}
+                <LabeledNumber
+                  label={page.spool.spoolWeight}
+                  mobile={isMobile}
                   min={0}
                   value={spoolFields.spool_weight ?? undefined}
                   onChange={(value) => {
@@ -428,7 +435,7 @@ export function NewSpoolPage(): React.JSX.Element {
               </Space>
 
               <Divider style={{ margin: "4px 0" }} />
-              <Space>
+              <Space wrap>
                 <Button
                   onClick={() => {
                     setCurrent(0);
@@ -500,8 +507,9 @@ export function NewSpoolPage(): React.JSX.Element {
                 />
               )}
 
-              <InputNumber
-                addonBefore={page.label.copies}
+              <LabeledNumber
+                label={page.label.copies}
+                mobile={isMobile}
                 min={1}
                 max={100}
                 value={copies}
@@ -511,7 +519,7 @@ export function NewSpoolPage(): React.JSX.Element {
               />
 
               <Divider style={{ margin: "4px 0" }} />
-              <Space>
+              <Space wrap>
                 <Button
                   onClick={() => {
                     setCurrent(1);
@@ -541,7 +549,7 @@ export function NewSpoolPage(): React.JSX.Element {
                   {submitErrorMessage ? (
                     <Alert type="error" showIcon message={submitErrorMessage} />
                   ) : null}
-                  <Space>
+                  <Space wrap>
                     <Button
                       disabled={submitting}
                       onClick={() => {
@@ -596,7 +604,7 @@ export function NewSpoolPage(): React.JSX.Element {
                     </>
                   ) : null}
 
-                  <Space>
+                  <Space wrap>
                     {result.status === "partial" ? (
                       <Link to="/history">
                         <Button>{page.submit.goToHistory}</Button>

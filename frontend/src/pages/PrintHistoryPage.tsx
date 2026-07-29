@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Alert, Button, Empty, Select, Space, Table, Tag } from "antd";
+import { Alert, Button, Card, Empty, List, Select, Space, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { PageHeading } from "./PageHeading";
+import { useIsMobile } from "../hooks/useMediaQuery";
 import { texts } from "../texts/de";
 import {
   listPrintJobs,
@@ -25,7 +26,54 @@ const STATUS_COLOR: Record<PrintJobStatus, string> = {
 
 const RETRYABLE: ReadonlySet<PrintJobStatus> = new Set(["failed", "cancelled"]);
 
+function JobCard({
+  job,
+  retrying,
+  onRetry,
+}: {
+  job: PrintJob;
+  retrying: number | undefined;
+  onRetry: (job: PrintJob) => void;
+}): React.JSX.Element {
+  return (
+    <List.Item>
+      <Card size="small" style={{ width: "100%" }}>
+        <Space direction="vertical" size={4} style={{ width: "100%" }}>
+          <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
+            <Typography.Text strong>{page.spoolLabel(job.spoolman_spool_id)}</Typography.Text>
+            <Tag color={STATUS_COLOR[job.status]}>{page.status[job.status]}</Tag>
+          </Space>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {new Date(job.created_at).toLocaleString("de-DE")}
+          </Typography.Text>
+          <Typography.Text type="secondary">
+            {page.columns.printer}: {job.printer_id ?? page.noPrinter}
+          </Typography.Text>
+          <Typography.Text type="secondary">
+            {page.columns.template}: {job.template_id ?? page.noTemplate}
+          </Typography.Text>
+          {job.error_message ? (
+            <Typography.Text type="danger">{job.error_message}</Typography.Text>
+          ) : null}
+          {RETRYABLE.has(job.status) ? (
+            <Button
+              size="small"
+              loading={retrying === job.id}
+              onClick={() => {
+                onRetry(job);
+              }}
+            >
+              {page.retry}
+            </Button>
+          ) : null}
+        </Space>
+      </Card>
+    </List.Item>
+  );
+}
+
 export function PrintHistoryPage(): React.JSX.Element {
+  const isMobile = useIsMobile();
   const [jobs, setJobs] = useState<PrintJob[]>([]);
   const [statusFilter, setStatusFilter] = useState<PrintJobStatus | undefined>();
   const [loadError, setLoadError] = useState<string | undefined>();
@@ -119,7 +167,7 @@ export function PrintHistoryPage(): React.JSX.Element {
         ) : null}
 
         <Select<PrintJobStatus | "all">
-          style={{ width: 220 }}
+          style={{ width: isMobile ? "100%" : 220 }}
           value={statusFilter ?? "all"}
           onChange={(value) => {
             setStatusFilter(value === "all" ? undefined : value);
@@ -133,14 +181,24 @@ export function PrintHistoryPage(): React.JSX.Element {
           ]}
         />
 
-        <Table<PrintJob>
-          rowKey="id"
-          columns={columns}
-          dataSource={jobs}
-          pagination={false}
-          scroll={{ x: "max-content" }}
-          locale={{ emptyText: <Empty description={page.empty} /> }}
-        />
+        {isMobile ? (
+          <List<PrintJob>
+            dataSource={jobs}
+            locale={{ emptyText: <Empty description={page.empty} /> }}
+            renderItem={(job) => (
+              <JobCard job={job} retrying={retrying} onRetry={(item) => void handleRetry(item)} />
+            )}
+          />
+        ) : (
+          <Table<PrintJob>
+            rowKey="id"
+            columns={columns}
+            dataSource={jobs}
+            pagination={false}
+            scroll={{ x: "max-content" }}
+            locale={{ emptyText: <Empty description={page.empty} /> }}
+          />
+        )}
       </Space>
     </>
   );
