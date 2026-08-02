@@ -1,0 +1,1062 @@
+From c2c64c1ad3ee84f1cdb6f9b88aeb87bbf3438baa Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 2 Aug 2026 18:27:47 +0000
+Subject: [PATCH 2/4] feat(printing): add printer configuration and a print
+ endpoint
+
+Adds a 'printer' table plus CRUD under /api/v1/printer, so a Spoolman
+instance can be pointed at a label printer once and print to it directly.
+
+- GET /printer/discover lists the queues a CUPS server offers, so a printer
+  that already exists on the host can be picked instead of typed in.
+- POST /printer/{id}/test reports reachability. A printer that is off is a
+  valid answer, not a server error, so it still responds 200.
+- POST /printer/{id}/print submits an already-rendered document. Size is
+  checked before decoding the base64 so an oversized payload is rejected
+  without being expanded in memory first.
+
+Purely additive: one router registration, one model appended, one migration.
+No existing behaviour changes, and nothing happens for users who never
+configure a printer.
+
+tests/test_ipp_live.py exercises the client against a real IPP server when
+SPOOLMAN_TEST_IPP_HOST is set, and is skipped otherwise.
+---
+ ..._02_1200-4e7b3a0c9d15_add_printer_table.py |  70 +++
+ spoolman/api/v1/printer.py                    | 414 ++++++++++++++++++
+ spoolman/api/v1/router.py                     |   3 +-
+ spoolman/database/models.py                   |  21 +
+ spoolman/database/printer.py                  | 117 +++++
+ tests/test_ipp_live.py                        |  76 ++++
+ tests/test_printer_api.py                     | 270 ++++++++++++
+ 7 files changed, 970 insertions(+), 1 deletion(-)
+ create mode 100644 migrations/versions/2026_08_02_1200-4e7b3a0c9d15_add_printer_table.py
+ create mode 100644 spoolman/api/v1/printer.py
+ create mode 100644 spoolman/database/printer.py
+ create mode 100644 tests/test_ipp_live.py
+ create mode 100644 tests/test_printer_api.py
+
+diff --git a/migrations/versions/2026_08_02_1200-4e7b3a0c9d15_add_printer_table.py b/migrations/versions/2026_08_02_1200-4e7b3a0c9d15_add_printer_table.py
+new file mode 100644
+index 0000000..8efb60f
+--- /dev/null
++++ b/migrations/versions/2026_08_02_1200-4e7b3a0c9d15_add_printer_table.py
+@@ -0,0 +1,70 @@
++"""add printer table.
++
++Revision ID: 4e7b3a0c9d15
++Revises: 9c1d5f2a7b31
++Create Date: 2026-08-02 12:00:00.000000
++"""
++
++import sqlalchemy as sa
++from alembic import op
++
++# revision identifiers, used by Alembic.
++revision = "4e7b3a0c9d15"
++down_revision = "9c1d5f2a7b31"
++branch_labels = None
++depends_on = None
++
++
++def upgrade() -> None:
++    """Perform the upgrade."""
++    op.create_table(
++        "printer",
++        sa.Column("id", sa.Integer(), nullable=False),
++        sa.Column("registered", sa.DateTime(), nullable=False),
++        sa.Column("name", sa.String(length=64), nullable=False, comment="Display name of this printer."),
++        sa.Column(
++            "host",
++            sa.String(length=255),
++            nullable=False,
++            comment="Hostname or IP address the printer listens on.",
++        ),
++        sa.Column(
++            "port",
++            sa.Integer(),
++            nullable=False,
++            comment="TCP port the printer's IPP service listens on, usually 631.",
++        ),
++        sa.Column(
++            "queue",
++            sa.String(length=128),
++            nullable=False,
++            comment="Name of the queue on the print server. Empty for a printer that is addressed directly.",
++        ),
++        sa.Column(
++            "use_tls",
++            sa.Boolean(),
++            nullable=False,
++            comment="Whether to talk to the printer over ipps:// instead of ipp://.",
++        ),
++        sa.Column(
++            "is_default",
++            sa.Boolean(),
++            nullable=False,
++            comment="Whether this is the printer labels are sent to by default.",
++        ),
++        sa.Column(
++            "document_format",
++            sa.String(length=64),
++            nullable=False,
++            comment='MIME type this printer is sent documents as, e.g. "image/png".',
++        ),
++        sa.Column("comment", sa.String(length=1024), nullable=True),
++        sa.PrimaryKeyConstraint("id"),
++    )
++    op.create_index(op.f("ix_printer_id"), "printer", ["id"], unique=False)
++
++
++def downgrade() -> None:
++    """Perform the downgrade."""
++    op.drop_index(op.f("ix_printer_id"), table_name="printer")
++    op.drop_table("printer")
+diff --git a/spoolman/api/v1/printer.py b/spoolman/api/v1/printer.py
+new file mode 100644
+index 0000000..ce7ae00
+--- /dev/null
++++ b/spoolman/api/v1/printer.py
+@@ -0,0 +1,414 @@
++"""Printer related endpoints.
++
++A printer is an IPP endpoint that Spoolman can hand a rendered label to, so that printing
++does not have to go through the browser's print dialog. The endpoints here manage the
++stored printers and expose the two operations a user interface needs on top of them:
++asking a printer whether it is alive, and sending it a document.
++"""
++
++import base64
++import binascii
++import logging
++from typing import Annotated
++
++from fastapi import APIRouter, Depends, Query
++from fastapi.responses import JSONResponse
++from pydantic import BaseModel, Field
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from spoolman.api.v1.models import Message, SpoolmanDateTime
++from spoolman.database import models as db_models
++from spoolman.database import printer
++from spoolman.database.database import get_db_session
++from spoolman.printing.ipp import IppClient, IppError, build_printer_uri
++
++logger = logging.getLogger(__name__)
++
++router = APIRouter(
++    prefix="/printer",
++    tags=["printer"],
++)
++
++# ruff: noqa: D103
++
++#: A label is a few hundred kilobytes at most. The cap is here so that a malformed or
++#: hostile request cannot make the server hold an arbitrarily large decoded blob in memory.
++MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
++
++#: Base64 grows the payload by 4 bytes per 3 input bytes, so anything longer than this
++#: cannot possibly decode to something within the limit and is refused without decoding.
++_MAX_DOCUMENT_BASE64_CHARS = ((MAX_DOCUMENT_BYTES + 2) // 3) * 4 + 4
++
++_TOO_LARGE_MESSAGE = f"The document exceeds the maximum size of {MAX_DOCUMENT_BYTES} bytes."
++
++
++class Printer(BaseModel):
++    id: int = Field(description="Unique internal ID of this printer.")
++    registered: SpoolmanDateTime = Field(description="When the printer was registered in the database. UTC Timezone.")
++    name: str = Field(max_length=64, description="Printer name.", examples=["Label printer"])
++    host: str = Field(max_length=255, description="Hostname or IP address of the printer.", examples=["192.168.1.50"])
++    port: int = Field(description="TCP port of the printer's IPP service.", examples=[631])
++    queue: str = Field(
++        max_length=128,
++        description="Queue name on the print server. Empty if the printer is addressed directly.",
++        examples=["labels"],
++    )
++    use_tls: bool = Field(description="Whether the printer is addressed over ipps:// instead of ipp://.")
++    is_default: bool = Field(description="Whether labels are sent to this printer by default.")
++    document_format: str = Field(
++        max_length=64,
++        description="MIME type documents are sent to this printer as.",
++        examples=["image/png"],
++    )
++    comment: str | None = Field(
++        None,
++        max_length=1024,
++        description="Free text comment about this printer.",
++        examples=[""],
++    )
++    uri: str = Field(description="The IPP URI this printer is addressed by.", examples=["ipp://192.168.1.50:631/"])
++
++    @staticmethod
++    def from_db(item: db_models.Printer) -> "Printer":
++        """Create a new Pydantic printer object from a database printer object."""
++        return Printer(
++            id=item.id,
++            registered=item.registered,
++            name=item.name,
++            host=item.host,
++            port=item.port,
++            queue=item.queue,
++            use_tls=item.use_tls,
++            is_default=item.is_default,
++            document_format=item.document_format,
++            comment=item.comment,
++            uri=build_printer_uri(item.host, item.port, item.queue, tls=item.use_tls),
++        )
++
++
++class PrinterParameters(BaseModel):
++    name: str = Field(max_length=64, description="Printer name.", examples=["Label printer"])
++    host: str = Field(max_length=255, description="Hostname or IP address of the printer.", examples=["192.168.1.50"])
++    port: int = Field(631, ge=1, le=65535, description="TCP port of the printer's IPP service.", examples=[631])
++    queue: str = Field(
++        "",
++        max_length=128,
++        description="Queue name on the print server. Leave empty for a printer that is addressed directly.",
++        examples=["labels"],
++    )
++    use_tls: bool = Field(
++        default=False,
++        description="Whether to address the printer over ipps:// instead of ipp://.",
++        examples=[False],
++    )
++    is_default: bool = Field(
++        default=False,
++        description="Whether labels should be sent to this printer by default. Only one printer can be the default.",
++        examples=[True],
++    )
++    document_format: str = Field(
++        "image/png",
++        max_length=64,
++        description="MIME type documents are sent to this printer as.",
++        examples=["image/png"],
++    )
++    comment: str | None = Field(
++        None,
++        max_length=1024,
++        description="Free text comment about this printer.",
++        examples=[""],
++    )
++
++
++class PrinterUpdateParameters(BaseModel):
++    name: str | None = Field(None, max_length=64, description="Printer name.", examples=["Label printer"])
++    host: str | None = Field(
++        None,
++        max_length=255,
++        description="Hostname or IP address of the printer.",
++        examples=["192.168.1.50"],
++    )
++    port: int | None = Field(None, ge=1, le=65535, description="TCP port of the IPP service.", examples=[631])
++    queue: str | None = Field(None, max_length=128, description="Queue name on the print server.", examples=["labels"])
++    use_tls: bool | None = Field(
++        None,
++        description="Whether to address the printer over ipps:// instead of ipp://.",
++        examples=[False],
++    )
++    is_default: bool | None = Field(
++        None,
++        description="Whether labels should be sent to this printer by default.",
++        examples=[True],
++    )
++    document_format: str | None = Field(
++        None,
++        max_length=64,
++        description="MIME type documents are sent to this printer as.",
++        examples=["image/png"],
++    )
++    comment: str | None = Field(
++        None,
++        max_length=1024,
++        description="Free text comment about this printer.",
++        examples=[""],
++    )
++
++
++class DiscoveredQueue(BaseModel):
++    name: str = Field(description="Queue name as the server reports it.", examples=["labels"])
++    uri: str = Field(description="IPP URI of the queue.", examples=["ipp://192.168.1.50:631/printers/labels"])
++    info: str | None = Field(None, description="Human readable description.", examples=["Brother QL-800"])
++    location: str | None = Field(None, description="Where the server says the printer stands.", examples=["Workshop"])
++    make_and_model: str | None = Field(None, description="Reported make and model.", examples=["Brother QL-800"])
++    state: int | None = Field(
++        None,
++        description="IPP printer-state: 3 = idle, 4 = processing, 5 = stopped.",
++        examples=[3],
++    )
++
++
++class PrinterTestResult(BaseModel):
++    reachable: bool = Field(description="Whether the printer answered at all.", examples=[True])
++    state: int | None = Field(
++        None,
++        description="IPP printer-state: 3 = idle, 4 = processing, 5 = stopped. Null if the printer did not say.",
++        examples=[3],
++    )
++    message: str | None = Field(
++        None,
++        description="Why the printer could not be reached. Null when it answered.",
++        examples=[None],
++    )
++
++
++class PrintParameters(BaseModel):
++    document_base64: str = Field(
++        description="The document to print, base64 encoded. Must decode to at most 20 MiB.",
++        examples=["iVBORw0KGgoAAAANSUhEUg=="],
++    )
++    job_name: str = Field("Spoolman label", max_length=255, description="Job name shown in the printer's queue.")
++    copies: int = Field(1, ge=1, le=100, description="Number of copies to print.", examples=[1])
++
++
++class PrintResult(BaseModel):
++    job_id: int | None = Field(
++        None,
++        description="Job ID the printer assigned. Null if the printer accepted the job without reporting one.",
++        examples=[42],
++    )
++    printer_id: int = Field(description="ID of the printer the document was sent to.", examples=[1])
++
++
++@router.get(
++    "",
++    name="Find printer",
++    description="Get a list of all configured printers.",
++    response_model_exclude_none=True,
++)
++async def find(
++    db: Annotated[AsyncSession, Depends(get_db_session)],
++) -> list[Printer]:
++    db_items = await printer.find_all(db)
++    return [Printer.from_db(db_item) for db_item in db_items]
++
++
++@router.post(
++    "",
++    name="Add printer",
++    description=(
++        "Add a new printer to the database. If is_default is set, any other printer loses that flag, "
++        "since only one printer can be the default."
++    ),
++    response_model_exclude_none=True,
++)
++async def create(
++    db: Annotated[AsyncSession, Depends(get_db_session)],
++    body: PrinterParameters,
++) -> Printer:
++    db_item = await printer.create(
++        db=db,
++        name=body.name,
++        host=body.host,
++        port=body.port,
++        queue=body.queue,
++        use_tls=body.use_tls,
++        is_default=body.is_default,
++        document_format=body.document_format,
++        comment=body.comment,
++    )
++    return Printer.from_db(db_item)
++
++
++# This must stay above /{printer_id}, otherwise the path parameter swallows it.
++@router.get(
++    "/discover",
++    name="Discover printer queues",
++    description=(
++        "Ask a print server which queues it offers, using the CUPS-Get-Printers operation. "
++        "A server that does not implement it — a standalone network printer, say — answers with an "
++        "empty list rather than an error."
++    ),
++    response_model_exclude_none=True,
++    response_model=list[DiscoveredQueue],
++    responses={502: {"model": Message}},
++)
++async def discover(  # noqa: ANN201
++    *,
++    host: Annotated[str, Query(title="Host", description="Hostname or IP address of the print server.")],
++    port: Annotated[int, Query(title="Port", description="TCP port of the print server's IPP service.")] = 631,
++    tls: Annotated[bool, Query(title="TLS", description="Whether to connect over ipps:// instead of ipp://.")] = False,
++):
++    client = IppClient()
++    try:
++        queues = await client.list_queues(host, port, tls=tls)
++    except IppError as exc:
++        return JSONResponse(status_code=502, content=Message(message=str(exc)).model_dump())
++
++    return [
++        DiscoveredQueue(
++            name=queue.name,
++            uri=queue.uri,
++            info=queue.info,
++            location=queue.location,
++            make_and_model=queue.make_and_model,
++            state=queue.state,
++        )
++        for queue in queues
++    ]
++
++
++@router.get(
++    "/{printer_id}",
++    name="Get printer",
++    description="Get a specific printer.",
++    response_model_exclude_none=True,
++    responses={404: {"model": Message}},
++)
++async def get(
++    db: Annotated[AsyncSession, Depends(get_db_session)],
++    printer_id: int,
++) -> Printer:
++    db_item = await printer.get_by_id(db, printer_id)
++    return Printer.from_db(db_item)
++
++
++@router.patch(
++    "/{printer_id}",
++    name="Update printer",
++    description=(
++        "Update any attribute of a printer. Only fields specified in the request will be affected. "
++        "Setting is_default takes that flag away from every other printer."
++    ),
++    response_model_exclude_none=True,
++    responses={404: {"model": Message}},
++)
++async def update(
++    db: Annotated[AsyncSession, Depends(get_db_session)],
++    printer_id: int,
++    body: PrinterUpdateParameters,
++) -> Printer:
++    patch_data = body.model_dump(exclude_unset=True)
++    db_item = await printer.update(db=db, printer_id=printer_id, data=patch_data)
++    return Printer.from_db(db_item)
++
++
++@router.delete(
++    "/{printer_id}",
++    name="Delete printer",
++    description="Delete a printer.",
++    responses={404: {"model": Message}},
++)
++async def delete(
++    db: Annotated[AsyncSession, Depends(get_db_session)],
++    printer_id: int,
++) -> Message:
++    await printer.delete(db, printer_id)
++    return Message(message="Success!")
++
++
++@router.post(
++    "/{printer_id}/test",
++    name="Test printer",
++    description=(
++        "Ask the printer for its state. A printer that cannot be reached is a valid answer to that "
++        "question, not a server error, so this always responds with 200 and reports the outcome in "
++        "the body."
++    ),
++    responses={404: {"model": Message}},
++)
++async def test(
++    db: Annotated[AsyncSession, Depends(get_db_session)],
++    printer_id: int,
++) -> PrinterTestResult:
++    db_item = await printer.get_by_id(db, printer_id)
++    uri = build_printer_uri(db_item.host, db_item.port, db_item.queue, tls=db_item.use_tls)
++
++    client = IppClient()
++    try:
++        state = await client.printer_state(uri)
++    except IppError as exc:
++        logger.debug("Printer %s at %s did not answer: %s", printer_id, uri, exc)
++        return PrinterTestResult(reachable=False, state=None, message=str(exc))
++
++    return PrinterTestResult(reachable=True, state=state, message=None)
++
++
++@router.post(
++    "/{printer_id}/print",
++    name="Print document",
++    description=(
++        "Send a document to the printer. The document is sent as the MIME type configured on the "
++        "printer, so it must already be in a format the printer understands."
++    ),
++    response_model=PrintResult,
++    responses={
++        400: {"model": Message},
++        404: {"model": Message},
++        413: {"model": Message},
++        502: {"model": Message},
++    },
++)
++async def print_document(  # noqa: ANN201
++    db: Annotated[AsyncSession, Depends(get_db_session)],
++    printer_id: int,
++    body: PrintParameters,
++):
++    if len(body.document_base64) > _MAX_DOCUMENT_BASE64_CHARS:
++        return JSONResponse(
++            status_code=413,
++            content=Message(message=_TOO_LARGE_MESSAGE).model_dump(),
++        )
++
++    try:
++        document = base64.b64decode(body.document_base64, validate=True)
++    except (binascii.Error, ValueError):
++        return JSONResponse(
++            status_code=400,
++            content=Message(message="The document is not valid base64.").model_dump(),
++        )
++
++    if len(document) > MAX_DOCUMENT_BYTES:
++        return JSONResponse(
++            status_code=413,
++            content=Message(message=_TOO_LARGE_MESSAGE).model_dump(),
++        )
++
++    db_item = await printer.get_by_id(db, printer_id)
++    uri = build_printer_uri(db_item.host, db_item.port, db_item.queue, tls=db_item.use_tls)
++
++    client = IppClient()
++    try:
++        job_id = await client.print_document(
++            uri,
++            document,
++            document_format=db_item.document_format,
++            job_name=body.job_name,
++            copies=body.copies,
++        )
++    except IppError as exc:
++        return JSONResponse(
++            status_code=502,
++            content=Message(message=f"The printer did not accept the document: {exc}").model_dump(),
++        )
++
++    return PrintResult(job_id=job_id, printer_id=printer_id)
+diff --git a/spoolman/api/v1/router.py b/spoolman/api/v1/router.py
+index 9813b3a..03dd1bc 100644
+--- a/spoolman/api/v1/router.py
++++ b/spoolman/api/v1/router.py
+@@ -16,7 +16,7 @@ from spoolman.exceptions import ItemNotFoundError
+ from spoolman.externaldb import get_external_db_name
+ from spoolman.ws import websocket_manager
+ 
+-from . import export, externaldb, field, filament, models, other, search, setting, spool, vendor
++from . import export, externaldb, field, filament, models, other, printer, search, setting, spool, vendor
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -115,3 +115,4 @@ app.include_router(other.router)
+ app.include_router(externaldb.router)
+ app.include_router(export.router)
+ app.include_router(search.router)
++app.include_router(printer.router)
+diff --git a/spoolman/database/models.py b/spoolman/database/models.py
+index bbb60cd..9c43a81 100644
+--- a/spoolman/database/models.py
++++ b/spoolman/database/models.py
+@@ -129,3 +129,24 @@ class SpoolField(Base):
+     spool: Mapped["Spool"] = relationship(back_populates="extra")
+     key: Mapped[str] = mapped_column(String(64), primary_key=True, index=True)
+     value: Mapped[str] = mapped_column(Text())
++
++
++class Printer(Base):
++    __tablename__ = "printer"
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
++    registered: Mapped[datetime] = mapped_column()
++    name: Mapped[str] = mapped_column(String(64), comment="Display name of this printer.")
++    host: Mapped[str] = mapped_column(String(255), comment="Hostname or IP address the printer listens on.")
++    port: Mapped[int] = mapped_column(comment="TCP port the printer's IPP service listens on, usually 631.")
++    queue: Mapped[str] = mapped_column(
++        String(128),
++        comment="Name of the queue on the print server. Empty for a printer that is addressed directly.",
++    )
++    use_tls: Mapped[bool] = mapped_column(comment="Whether to talk to the printer over ipps:// instead of ipp://.")
++    is_default: Mapped[bool] = mapped_column(comment="Whether this is the printer labels are sent to by default.")
++    document_format: Mapped[str] = mapped_column(
++        String(64),
++        comment='MIME type this printer is sent documents as, e.g. "image/png".',
++    )
++    comment: Mapped[str | None] = mapped_column(String(1024))
+diff --git a/spoolman/database/printer.py b/spoolman/database/printer.py
+new file mode 100644
+index 0000000..6fb4485
+--- /dev/null
++++ b/spoolman/database/printer.py
+@@ -0,0 +1,117 @@
++"""Helper functions for interacting with printer database objects."""
++
++import logging
++from datetime import datetime
++
++from sqlalchemy import select
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from spoolman.database import models
++from spoolman.exceptions import ItemNotFoundError
++
++logger = logging.getLogger(__name__)
++
++
++async def _clear_default_flag(db: AsyncSession, *, except_id: int | None = None) -> None:
++    """Take the default flag away from every printer, optionally sparing one.
++
++    Done through the ORM rather than a bulk UPDATE so that any printer already loaded in
++    this session sees the new value: there are only ever a handful of printers, so the
++    extra SELECT costs nothing and the identity map cannot go stale behind our back.
++    """
++    stmt = select(models.Printer).where(models.Printer.is_default.is_(True))
++    if except_id is not None:
++        stmt = stmt.where(models.Printer.id != except_id)
++    rows = await db.execute(stmt)
++    for other in rows.scalars().all():
++        other.is_default = False
++
++
++async def create(
++    *,
++    db: AsyncSession,
++    name: str,
++    host: str,
++    port: int = 631,
++    queue: str = "",
++    use_tls: bool = False,
++    is_default: bool = False,
++    document_format: str = "image/png",
++    comment: str | None = None,
++) -> models.Printer:
++    """Add a new printer to the database."""
++    if is_default:
++        await _clear_default_flag(db)
++
++    printer = models.Printer(
++        registered=datetime.utcnow().replace(microsecond=0),
++        name=name,
++        host=host,
++        port=port,
++        queue=queue,
++        use_tls=use_tls,
++        is_default=is_default,
++        document_format=document_format,
++        comment=comment,
++    )
++    db.add(printer)
++    await db.commit()
++    return printer
++
++
++async def get_by_id(db: AsyncSession, printer_id: int) -> models.Printer:
++    """Get a printer object from the database by the unique ID."""
++    printer = await db.get(models.Printer, printer_id)
++    if printer is None:
++        raise ItemNotFoundError(f"No printer with ID {printer_id} found.")
++    return printer
++
++
++async def find_all(db: AsyncSession) -> list[models.Printer]:
++    """Return every configured printer, oldest first."""
++    rows = await db.execute(
++        select(models.Printer).order_by(models.Printer.id),
++        execution_options={"populate_existing": True},
++    )
++    return list(rows.scalars().all())
++
++
++async def get_default(db: AsyncSession) -> models.Printer:
++    """Return the printer marked as default, or the first one if none is marked."""
++    rows = await db.execute(
++        select(models.Printer).where(models.Printer.is_default.is_(True)).order_by(models.Printer.id),
++    )
++    printer = rows.scalars().first()
++    if printer is None:
++        rows = await db.execute(select(models.Printer).order_by(models.Printer.id))
++        printer = rows.scalars().first()
++    if printer is None:
++        raise ItemNotFoundError("No printer has been configured.")
++    return printer
++
++
++async def update(
++    *,
++    db: AsyncSession,
++    printer_id: int,
++    data: dict,
++) -> models.Printer:
++    """Update the fields of a printer object."""
++    printer = await get_by_id(db, printer_id)
++
++    # Clear the other printers' flag before touching this one, so that nothing this
++    # function has changed can be flushed and then read back in a half-applied state.
++    if data.get("is_default", printer.is_default):
++        await _clear_default_flag(db, except_id=printer_id)
++
++    for k, v in data.items():
++        setattr(printer, k, v)
++    await db.commit()
++    return printer
++
++
++async def delete(db: AsyncSession, printer_id: int) -> None:
++    """Delete a printer object."""
++    printer = await get_by_id(db, printer_id)
++    await db.delete(printer)
++    await db.commit()
+diff --git a/tests/test_ipp_live.py b/tests/test_ipp_live.py
+new file mode 100644
+index 0000000..3ff12ea
+--- /dev/null
++++ b/tests/test_ipp_live.py
+@@ -0,0 +1,76 @@
++r"""Optional end-to-end checks against a real IPP server.
++
++Skipped unless ``SPOOLMAN_TEST_IPP_HOST`` is set, so the normal test run needs
++no printer and no network. Point it at a CUPS instance to verify the client
++against a real implementation rather than against hand-built payloads:
++
++    SPOOLMAN_TEST_IPP_HOST=localhost \\
++    SPOOLMAN_TEST_IPP_QUEUE=TestLabel \\
++    pytest tests/test_ipp_live.py
++
++The wire format itself is covered without a server in ``test_ipp.py``.
++"""
++
++import os
++import struct
++import zlib
++
++import pytest
++
++from spoolman.printing.ipp import IppClient, build_printer_uri
++
++_HOST = os.environ.get("SPOOLMAN_TEST_IPP_HOST")
++_PORT = int(os.environ.get("SPOOLMAN_TEST_IPP_PORT", "631"))
++_QUEUE = os.environ.get("SPOOLMAN_TEST_IPP_QUEUE", "")
++
++pytestmark = pytest.mark.skipif(not _HOST, reason="SPOOLMAN_TEST_IPP_HOST is not set")
++
++
++def _tiny_png() -> bytes:
++    """Build an 8x8 red PNG, so the test needs no image library."""
++
++    def chunk(kind: bytes, data: bytes) -> bytes:
++        body = kind + data
++        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
++
++    header = struct.pack(">IIBBBBB", 8, 8, 8, 2, 0, 0, 0)
++    pixels = b"".join(b"\x00" + b"\xff\x00\x00" * 8 for _ in range(8))
++    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(pixels)) + chunk(b"IEND", b"")
++
++
++@pytest.mark.asyncio
++async def test_queues_can_be_discovered():
++    queues = await IppClient().list_queues(_HOST or "", _PORT)
++
++    assert queues, "The CUPS server reported no queues."
++    assert all(queue.name for queue in queues)
++
++
++@pytest.mark.asyncio
++@pytest.mark.skipif(not _QUEUE, reason="SPOOLMAN_TEST_IPP_QUEUE is not set")
++async def test_printer_reports_a_state():
++    uri = build_printer_uri(_HOST or "", _PORT, _QUEUE)
++
++    state = await IppClient().printer_state(uri)
++
++    # 3 idle, 4 processing, 5 stopped (RFC 8011 section 5.4.11).
++    assert state in {3, 4, 5}
++
++
++@pytest.mark.asyncio
++@pytest.mark.skipif(not _QUEUE, reason="SPOOLMAN_TEST_IPP_QUEUE is not set")
++async def test_a_document_can_be_submitted_and_tracked():
++    client = IppClient()
++    uri = build_printer_uri(_HOST or "", _PORT, _QUEUE)
++
++    job_id = await client.print_document(
++        uri,
++        _tiny_png(),
++        document_format="image/png",
++        job_name="Spoolman IPP live test",
++        copies=1,
++    )
++
++    assert job_id is not None
++    state = await client.job_state(uri, job_id)
++    assert state.state >= 3
+diff --git a/tests/test_printer_api.py b/tests/test_printer_api.py
+new file mode 100644
+index 0000000..9de4100
+--- /dev/null
++++ b/tests/test_printer_api.py
+@@ -0,0 +1,270 @@
++"""Tests for the printer endpoints and the printer database helpers.
++
++Everything here runs against an in-memory SQLite database, and the IPP client is always
++replaced with a mock: a unit test must never open a socket, least of all to whatever
++happens to answer on port 631 of the machine running the suite.
++"""
++
++import base64
++from collections.abc import AsyncGenerator
++from unittest.mock import AsyncMock, patch
++
++import httpx
++import pytest
++import pytest_asyncio
++from fastapi import FastAPI
++from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
++
++from spoolman.api.v1 import printer as printer_api
++from spoolman.database import models
++from spoolman.database import printer as printer_db
++from spoolman.database.database import get_db_session
++from spoolman.exceptions import ItemNotFoundError
++from spoolman.printing.ipp import IppError
++
++
++@pytest_asyncio.fixture
++async def db() -> AsyncGenerator[AsyncSession, None]:
++    """Return a session against a throwaway in-memory database with the full schema."""
++    engine = create_async_engine("sqlite+aiosqlite://")
++    async with engine.begin() as conn:
++        await conn.run_sync(models.Base.metadata.create_all)
++
++    session_maker = async_sessionmaker(engine, expire_on_commit=False)
++    async with session_maker() as session:
++        yield session
++
++    await engine.dispose()
++
++
++@pytest_asyncio.fixture
++async def client(db: AsyncSession) -> AsyncGenerator[httpx.AsyncClient, None]:
++    """Return an HTTP client for an app that serves only the printer router."""
++    app = FastAPI()
++    app.include_router(printer_api.router)
++
++    async def _session() -> AsyncGenerator[AsyncSession, None]:
++        yield db
++
++    app.dependency_overrides[get_db_session] = _session
++
++    transport = httpx.ASGITransport(app=app)
++    async with httpx.AsyncClient(transport=transport, base_url="http://test") as http_client:
++        yield http_client
++
++
++async def _add_printer(db: AsyncSession, name: str, *, is_default: bool = False) -> models.Printer:
++    return await printer_db.create(
++        db=db,
++        name=name,
++        host="192.168.1.50",
++        port=631,
++        queue="labels",
++        is_default=is_default,
++    )
++
++
++@pytest.mark.asyncio
++async def test_print_forwards_the_decoded_document_to_the_printer(client: httpx.AsyncClient, db: AsyncSession):
++    """The endpoint decodes the base64 body and hands the raw bytes to the IPP client."""
++    db_printer = await _add_printer(db, "Label printer")
++    document = b"\x89PNG\r\n\x1a\nlabel-bytes"
++
++    ipp = AsyncMock()
++    ipp.print_document.return_value = 42
++
++    with patch.object(printer_api, "IppClient", return_value=ipp):
++        response = await client.post(
++            f"/printer/{db_printer.id}/print",
++            json={"document_base64": base64.b64encode(document).decode(), "job_name": "Spool 7"},
++        )
++
++    assert response.status_code == 200
++    assert response.json() == {"job_id": 42, "printer_id": db_printer.id}
++
++    args, kwargs = ipp.print_document.call_args
++    assert args[0] == "ipp://192.168.1.50:631/printers/labels"
++    assert args[1] == document
++    assert kwargs["document_format"] == "image/png"
++    assert kwargs["job_name"] == "Spool 7"
++
++
++@pytest.mark.asyncio
++async def test_print_accepts_a_printer_that_reports_no_job_id(client: httpx.AsyncClient, db: AsyncSession):
++    """A printer that accepts the job without naming it is not an error."""
++    db_printer = await _add_printer(db, "Label printer")
++
++    ipp = AsyncMock()
++    ipp.print_document.return_value = None
++
++    with patch.object(printer_api, "IppClient", return_value=ipp):
++        response = await client.post(
++            f"/printer/{db_printer.id}/print",
++            json={"document_base64": base64.b64encode(b"x").decode()},
++        )
++
++    assert response.status_code == 200
++    assert response.json()["job_id"] is None
++
++
++@pytest.mark.asyncio
++async def test_print_rejects_a_document_over_the_size_limit(client: httpx.AsyncClient, db: AsyncSession):
++    """Anything past the cap comes back as 413, and nothing is sent to the printer."""
++    db_printer = await _add_printer(db, "Label printer")
++    oversized = base64.b64encode(b"\x00" * (printer_api.MAX_DOCUMENT_BYTES + 1)).decode()
++
++    ipp = AsyncMock()
++    with patch.object(printer_api, "IppClient", return_value=ipp):
++        response = await client.post(
++            f"/printer/{db_printer.id}/print",
++            json={"document_base64": oversized},
++        )
++
++    assert response.status_code == 413
++    ipp.print_document.assert_not_called()
++
++
++@pytest.mark.asyncio
++async def test_print_rejects_a_body_that_is_not_base64(client: httpx.AsyncClient, db: AsyncSession):
++    db_printer = await _add_printer(db, "Label printer")
++
++    ipp = AsyncMock()
++    with patch.object(printer_api, "IppClient", return_value=ipp):
++        response = await client.post(
++            f"/printer/{db_printer.id}/print",
++            json={"document_base64": "not base64 !!!"},
++        )
++
++    assert response.status_code == 400
++    ipp.print_document.assert_not_called()
++
++
++@pytest.mark.asyncio
++async def test_print_reports_a_refusing_printer_as_a_bad_gateway(client: httpx.AsyncClient, db: AsyncSession):
++    """The printer failing is an upstream failure, not a bad request."""
++    db_printer = await _add_printer(db, "Label printer")
++
++    ipp = AsyncMock()
++    ipp.print_document.side_effect = IppError("Could not reach the printer: timed out")
++
++    with patch.object(printer_api, "IppClient", return_value=ipp):
++        response = await client.post(
++            f"/printer/{db_printer.id}/print",
++            json={"document_base64": base64.b64encode(b"x").decode()},
++        )
++
++    assert response.status_code == 502
++    assert "timed out" in response.json()["message"]
++
++
++@pytest.mark.asyncio
++async def test_unreachable_printer_is_a_result_not_an_error(client: httpx.AsyncClient, db: AsyncSession):
++    """A printer that is switched off must not turn into a 5xx."""
++    db_printer = await _add_printer(db, "Label printer")
++
++    ipp = AsyncMock()
++    ipp.printer_state.side_effect = IppError("Could not reach the printer: connection refused")
++
++    with patch.object(printer_api, "IppClient", return_value=ipp):
++        response = await client.post(f"/printer/{db_printer.id}/test")
++
++    assert response.status_code == 200
++    body = response.json()
++    assert body["reachable"] is False
++    assert body["state"] is None
++    assert "connection refused" in body["message"]
++
++
++@pytest.mark.asyncio
++async def test_reachable_printer_reports_its_state(client: httpx.AsyncClient, db: AsyncSession):
++    db_printer = await _add_printer(db, "Label printer")
++
++    ipp = AsyncMock()
++    ipp.printer_state.return_value = 3
++
++    with patch.object(printer_api, "IppClient", return_value=ipp):
++        response = await client.post(f"/printer/{db_printer.id}/test")
++
++    assert response.status_code == 200
++    assert response.json() == {"reachable": True, "state": 3, "message": None}
++
++
++@pytest.mark.asyncio
++async def test_discover_is_not_shadowed_by_the_id_route(client: httpx.AsyncClient):
++    """/printer/discover must reach the discovery handler, not the get-by-id handler."""
++    ipp = AsyncMock()
++    ipp.list_queues.return_value = []
++
++    with patch.object(printer_api, "IppClient", return_value=ipp):
++        response = await client.get("/printer/discover", params={"host": "cups.local"})
++
++    assert response.status_code == 200
++    assert response.json() == []
++    ipp.list_queues.assert_awaited_once_with("cups.local", 631, tls=False)
++
++
++@pytest.mark.asyncio
++async def test_a_second_default_printer_takes_the_flag_from_the_first(db: AsyncSession):
++    first = await _add_printer(db, "First", is_default=True)
++    second = await _add_printer(db, "Second", is_default=True)
++
++    printers = {p.name: p.is_default for p in await printer_db.find_all(db)}
++    assert printers == {"First": False, "Second": True}
++    assert (await printer_db.get_default(db)).id == second.id
++    assert first.is_default is False
++
++
++@pytest.mark.asyncio
++async def test_patching_a_printer_to_default_clears_the_previous_one(client: httpx.AsyncClient, db: AsyncSession):
++    first = await _add_printer(db, "First", is_default=True)
++    second = await _add_printer(db, "Second")
++
++    response = await client.patch(f"/printer/{second.id}", json={"is_default": True})
++    assert response.status_code == 200
++    assert response.json()["is_default"] is True
++
++    printers = {p.id: p.is_default for p in await printer_db.find_all(db)}
++    assert printers == {first.id: False, second.id: True}
++
++
++@pytest.mark.asyncio
++async def test_get_default_falls_back_to_the_first_printer(db: AsyncSession):
++    """With nothing marked as default, the oldest printer is the one labels go to."""
++    first = await _add_printer(db, "First")
++    await _add_printer(db, "Second")
++
++    assert (await printer_db.get_default(db)).id == first.id
++
++
++@pytest.mark.asyncio
++async def test_get_default_without_any_printer_is_a_not_found(db: AsyncSession):
++    with pytest.raises(ItemNotFoundError):
++        await printer_db.get_default(db)
++
++
++@pytest.mark.asyncio
++async def test_unknown_printer_ids_are_not_found(db: AsyncSession):
++    with pytest.raises(ItemNotFoundError):
++        await printer_db.get_by_id(db, 404)
++
++
++@pytest.mark.asyncio
++async def test_printers_can_be_listed_created_and_deleted(client: httpx.AsyncClient):
++    created = await client.post(
++        "/printer",
++        json={"name": "Label printer", "host": "192.168.1.50", "queue": "labels", "document_format": "image/png"},
++    )
++    assert created.status_code == 200
++    printer_id = created.json()["id"]
++    assert created.json()["uri"] == "ipp://192.168.1.50:631/printers/labels"
++
++    listed = await client.get("/printer")
++    assert [item["id"] for item in listed.json()] == [printer_id]
++
++    fetched = await client.get(f"/printer/{printer_id}")
++    assert fetched.status_code == 200
++    assert fetched.json()["name"] == "Label printer"
++
++    deleted = await client.delete(f"/printer/{printer_id}")
++    assert deleted.status_code == 200
++    assert (await client.get("/printer")).json() == []

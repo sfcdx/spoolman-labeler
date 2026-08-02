@@ -1,0 +1,218 @@
+From 096c609393255116b3375ed2619080a2ec47d169 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 2 Aug 2026 18:45:49 +0000
+Subject: [PATCH 4/4] feat(client): add spools and print their labels in one
+ step
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The add-spool dialog already creates N spools from its count field. This adds
+a second submit button that then prints a label for each one, for the case
+this is really for: four rolls of the same filament arrive, you type 4, and
+you want four labels without visiting the label page afterwards.
+
+Creation and printing stay separate. The spools are created through the
+existing path, and printing runs strictly after it and cannot throw, so a
+printer that is off or unplugged never costs you the spools you just entered
+— it only changes the message you get.
+
+The button is shown only when a printer is configured and a spool label
+design exists, so the dialog is unchanged for everyone else.
+---
+ client_v2/locales/de/common.json              |   8 ++
+ client_v2/locales/en/common.json              |   8 ++
+ .../src/lib/components/AddSpoolModal.svelte   | 103 +++++++++++++++++-
+ 3 files changed, 116 insertions(+), 3 deletions(-)
+
+diff --git a/client_v2/locales/de/common.json b/client_v2/locales/de/common.json
+index 6af9ba1..d3b4690 100644
+--- a/client_v2/locales/de/common.json
++++ b/client_v2/locales/de/common.json
+@@ -1,4 +1,12 @@
+ {
++    "add.addAndPrintN_one": "{{count}} Spule hinzufügen & Etikett drucken",
++    "add.addAndPrintN_other": "{{count}} Spulen hinzufügen & Etiketten drucken",
++    "add.printBusy": "Wird hinzugefügt & gedruckt...",
++    "add.printFailed_one": "{{count}} Spule hinzugefügt, aber das Etikett konnte nicht an {{printer}} gesendet werden: {{error}}",
++    "add.printFailed_other": "{{count}} Spulen hinzugefügt, aber die Etiketten konnten nicht an {{printer}} gesendet werden: {{error}}",
++    "add.printPartial": "{{count}} Spulen hinzugefügt, {{sent}} von {{total}} Etiketten an {{printer}} gesendet: {{error}}",
++    "add.printSent_one": "{{count}} Spule hinzugefügt, Etikett an {{printer}} gesendet",
++    "add.printSent_other": "{{count}} Spulen hinzugefügt, Etiketten an {{printer}} gesendet",
+     "buttons.archive": "Archiv",
+     "buttons.cancel": "Abbrechen",
+     "buttons.clear": "Bereinigen",
+diff --git a/client_v2/locales/en/common.json b/client_v2/locales/en/common.json
+index 7f993d8..0f09d27 100644
+--- a/client_v2/locales/en/common.json
++++ b/client_v2/locales/en/common.json
+@@ -1,5 +1,7 @@
+ {
+     "add.addAndNew": "Add & new",
++    "add.addAndPrintN_one": "Add {{count}} spool & print label",
++    "add.addAndPrintN_other": "Add {{count}} spools & print labels",
+     "add.addN_one": "Add {{count}} spool",
+     "add.addN_other": "Add {{count}} spools",
+     "add.adding": "Adding...",
+@@ -28,6 +30,12 @@
+     "add.noCatalog": "No filaments in your catalog",
+     "add.noManufacturer": "No manufacturer",
+     "add.pickColor": "Pick color",
++    "add.printBusy": "Adding & printing...",
++    "add.printFailed_one": "{{count}} spool added, but its label could not be sent to {{printer}}: {{error}}",
++    "add.printFailed_other": "{{count}} spools added, but their labels could not be sent to {{printer}}: {{error}}",
++    "add.printPartial": "{{count}} spools added, {{sent}} of {{total}} labels sent to {{printer}}: {{error}}",
++    "add.printSent_one": "{{count}} spool added, label sent to {{printer}}",
++    "add.printSent_other": "{{count}} spools added, labels sent to {{printer}}",
+     "add.searchPlaceholder": "Search your catalog and {{name}}...",
+     "add.searching": "Searching...",
+     "add.spoolWeightPreset.cardboard": "Cardboard {{weight}} g",
+diff --git a/client_v2/src/lib/components/AddSpoolModal.svelte b/client_v2/src/lib/components/AddSpoolModal.svelte
+index 537cbf9..0cb04c3 100644
+--- a/client_v2/src/lib/components/AddSpoolModal.svelte
++++ b/client_v2/src/lib/components/AddSpoolModal.svelte
+@@ -11,7 +11,7 @@
+ 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+ 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
+ 	import ExtraFieldsSection from './ExtraFieldsSection.svelte';
+-	import type { Filament, Extra, MultiColorDirection } from '$lib/types';
++	import type { Filament, Spool, Extra, MultiColorDirection } from '$lib/types';
+ 	import { inventory } from '$lib/stores/inventory.svelte';
+ 	import { settings } from '$lib/stores/settings.svelte';
+ 	import { serverInfo } from '$lib/stores/serverInfo.svelte';
+@@ -21,6 +21,12 @@
+ 	import { externalColors, externalDirection, type ExternalFilament } from '$lib/api/external';
+ 	import { roundGrams, weightAuto } from '$lib/utils/format';
+ 	import { loadMaterials, type MaterialSpec } from '$lib/data/materials';
++	import { printers } from '$lib/stores/printers.svelte';
++	import { labelDesigns } from '$lib/stores/labelDesigns.svelte';
++	import { toasts } from '$lib/stores/toasts.svelte';
++	import { printLabelsToServer } from '$lib/labels/serverPrint';
++	import { DEFAULT_LAYOUT, labelKind } from '$lib/labels/types';
++	import type { LabelBinding } from '$lib/labels/template';
+ 	import * as m from '$lib/paraglide/messages';
+ 
+ 	interface Props {
+@@ -392,7 +398,7 @@
+ 		onclose?.();
+ 	}
+ 
+-	async function submit(andAnother = false) {
++	async function submit(andAnother = false, andPrint = false) {
+ 		if (!canSubmit) return;
+ 		submitting = true;
+ 		try {
+@@ -451,7 +457,13 @@
+ 			if (lastUsed) body.last_used = lastUsed;
+ 			if (Object.keys(extraValues).length) body.extra = extraValues;
+ 
+-			for (let i = 0; i < n; i++) await spoolSource.createSpool(body);
++			// Kept as the returned spools (rather than discarded) so the optional
++			// "add & print" path below can label exactly the ones just created.
++			const addedSpools: Spool[] = [];
++			for (let i = 0; i < n; i++) addedSpools.push(await spoolSource.createSpool(body));
++			// Printing is strictly downstream of creation and never throws: the spools
++			// exist from here on, whatever the printer does.
++			if (andPrint) await printLabelsFor(addedSpools);
+ 			if (andAnother && created) {
+ 				// Just added a brand-new filament: the overwhelmingly likely next entry
+ 				// is a sibling of it (the multi-colour shopping trip this flow exists
+@@ -532,6 +544,85 @@
+ 		return e;
+ 	});
+ 	let canSubmit = $derived((creating || !!chosen) && Object.keys(errors).length === 0);
++
++	// --- optional: print the labels for the spools just added --------------------
++	// Purely additive. Everything below is dormant unless the user has both a
++	// configured printer and a spool label design; with either missing the extra
++	// button never renders and this dialog behaves exactly as it did before.
++
++	// Loaded lazily on open: an installation without printers shouldn't pay for
++	// these requests on every page load just because the modal lives in the layout.
++	$effect(() => {
++		if (!open) return;
++		printers.ensure();
++		void labelDesigns.load();
++	});
++
++	// Spools get spool labels; a filament design can't be bound to a spool here.
++	let printDesign = $derived(labelDesigns.designs.find((d) => labelKind(d) === 'spool'));
++	let canPrint = $derived(!!printDesign && printers.printers.length > 0 && !!printers.defaultPrinter);
++	// Distinguishes the two busy buttons while a submit is in flight.
++	let printSubmitting = $state(false);
++
++	function bindingFor(s: Spool): LabelBinding {
++		const filament = inventory.filamentById(s.filamentId);
++		return { spool: s, filament, vendor: filament ? inventory.vendorById(filament.vendorId) : undefined };
++	}
++
++	/**
++	 * Send one label per freshly created spool to the default printer. Reports the
++	 * outcome and swallows every failure: the spools are already saved, so a dead
++	 * printer must not look like a failed add (and must never undo one).
++	 */
++	async function printLabelsFor(spools: Spool[]) {
++		const printer = printers.defaultPrinter;
++		const design = printDesign;
++		if (!printer || !design || spools.length === 0) return;
++		try {
++			const res = await printLabelsToServer({
++				design,
++				bindings: spools.map(bindingFor),
++				layout: DEFAULT_LAYOUT,
++				baseUrl: settings.baseUrl,
++				printerId: printer.id
++			});
++			if (res.failed === 0) {
++				toasts.success(m['add.printSent']({ count: res.sent, printer: printer.name }));
++			} else if (res.sent === 0) {
++				toasts.error(
++					m['add.printFailed']({ count: spools.length, printer: printer.name, error: res.error ?? '' })
++				);
++			} else {
++				toasts.error(
++					m['add.printPartial']({
++						count: spools.length,
++						sent: res.sent,
++						total: res.total,
++						printer: printer.name,
++						error: res.error ?? ''
++					})
++				);
++			}
++		} catch (e) {
++			console.error('Failed to print labels for the new spools', e);
++			toasts.error(
++				m['add.printFailed']({
++					count: spools.length,
++					printer: printer.name,
++					error: e instanceof Error ? e.message : String(e)
++				})
++			);
++		}
++	}
++
++	async function submitAndPrint() {
++		printSubmitting = true;
++		try {
++			await submit(false, true);
++		} finally {
++			printSubmitting = false;
++		}
++	}
+ </script>
+ 
+ <svelte:window
+@@ -962,6 +1053,12 @@
+ 							<Button variant="outline" disabled={!canSubmit || submitting} onclick={() => submit(true)}
+ 								>{m['add.addAndNew']()}</Button
+ 							>
++							<!-- Additive: only once a printer *and* a spool label design exist. -->
++							{#if canPrint}
++								<Button variant="outline" disabled={!canSubmit || submitting} onclick={submitAndPrint}>
++									{printSubmitting ? m['add.printBusy']() : m['add.addAndPrintN']({ count: countN })}
++								</Button>
++							{/if}
+ 							<Button disabled={!canSubmit || submitting} onclick={() => submit(false)}>
+ 								{submitting ? m['add.adding']() : m['add.addN']({ count: countN })}
+ 							</Button>

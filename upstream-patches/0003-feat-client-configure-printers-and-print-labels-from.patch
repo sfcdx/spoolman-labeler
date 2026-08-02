@@ -1,0 +1,1292 @@
+From d9e74d5b305fe752c63af32bb2a64a30daa4e043 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 2 Aug 2026 18:38:09 +0000
+Subject: [PATCH 3/4] feat(client): configure printers and print labels from
+ the server
+
+Adds a Printers section to Settings (create, edit, delete, set default,
+test reachability, and discover the queues an existing CUPS server offers),
+and a second print button on the label page that sends the labels to the
+configured printer instead of opening the browser's print dialog.
+
+Labels are still rendered by the existing designer via renderLabelDataUrl():
+only the destination of the finished raster changes, so the designer stays
+the single source of truth for how a label looks.
+
+The new button is rendered only when at least one printer is configured, so
+nothing changes for anyone who does not use this. Labels are sent one at a
+time and a failure on one does not stop the rest; the outcome is summarised
+in a toast.
+---
+ client_v2/locales/de/common.json              |  44 ++
+ client_v2/locales/en/common.json              |  44 ++
+ client_v2/src/lib/api/printers.test.ts        |  38 ++
+ client_v2/src/lib/api/printers.ts             | 115 ++++
+ .../components/labels/PrintLayoutPanel.svelte |  91 +++
+ .../settings/PrinterSettings.svelte           | 570 ++++++++++++++++++
+ client_v2/src/lib/labels/serverPrint.ts       |  69 +++
+ client_v2/src/lib/stores/printers.svelte.ts   |  88 +++
+ client_v2/src/lib/stores/printers.test.ts     |  61 ++
+ client_v2/src/routes/settings/+page.svelte    |   7 +
+ 10 files changed, 1127 insertions(+)
+ create mode 100644 client_v2/src/lib/api/printers.test.ts
+ create mode 100644 client_v2/src/lib/api/printers.ts
+ create mode 100644 client_v2/src/lib/components/settings/PrinterSettings.svelte
+ create mode 100644 client_v2/src/lib/labels/serverPrint.ts
+ create mode 100644 client_v2/src/lib/stores/printers.svelte.ts
+ create mode 100644 client_v2/src/lib/stores/printers.test.ts
+
+diff --git a/client_v2/locales/de/common.json b/client_v2/locales/de/common.json
+index 1fcd761..6af9ba1 100644
+--- a/client_v2/locales/de/common.json
++++ b/client_v2/locales/de/common.json
+@@ -70,6 +70,14 @@
+     "printing.qrcode.useHTTPUrl.options.url": "URL",
+     "printing.qrcode.useHTTPUrl.preview": "Vorschau:",
+     "printing.qrcode.useHTTPUrl.tooltip": "Die Standardeinstellung verwendet einen proprietären Link, der nur funktioniert, wenn er mit der Scanfunktion von Spoolman gescannt wird. URL verwendet entweder die in den Einstellungen angegebene Basis-URL oder wenn diese nicht festgelegt ist die aktuelle Seiten-URL.",
++    "printing.server.failed": "Senden an {{printer}} fehlgeschlagen: {{error}}",
++    "printing.server.partial": "{{sent}} von {{total}} Etiketten an {{printer}} gesendet, {{failed}} fehlgeschlagen: {{error}}",
++    "printing.server.printN_one": "{{count}} Etikett an Drucker senden",
++    "printing.server.printN_other": "{{count}} Etiketten an Drucker senden",
++    "printing.server.printerLabel": "Drucker",
++    "printing.server.sending": "Wird gesendet...",
++    "printing.server.sent_one": "{{count}} Etikett an {{printer}} gesendet",
++    "printing.server.sent_other": "{{count}} Etiketten an {{printer}} gesendet",
+     "printing.spoolSelect.selectedTotal_one": "{{count}} Spule ausgewählt",
+     "printing.spoolSelect.selectedTotal_other": "{{count}} Spulen ausgewählt",
+     "scanner.description": "Spoolman QR-Code scannen, um Details der Spule anzuzeigen.",
+@@ -110,6 +118,42 @@
+     "settings.general.roundPrices.tooltip": "Rundet die Preise auf die nächsthöhere ganze Zahl.",
+     "settings.general.tab": "Allgemein",
+     "settings.header": "Einstellungen",
++    "settings.printers.add": "Drucker hinzufügen",
++    "settings.printers.comment": "Kommentar",
++    "settings.printers.defaultBadge": "Standard",
++    "settings.printers.deleteConfirm": "Drucker {{name}} löschen?",
++    "settings.printers.description": "Optional. Einen Netzwerk-Etikettendrucker (IPP/CUPS) eintragen, um Etiketten direkt aus dem Etiketten-Designer an ihn zu senden. Ohne Drucker ändert sich nichts: gedruckt wird weiterhin über den Druckdialog des Browsers.",
++    "settings.printers.discoverButton": "Suchen",
++    "settings.printers.discoverFailed": "Suche fehlgeschlagen: {{error}}",
++    "settings.printers.discoverHint": "Die Warteschlangen eines CUPS-/IPP-Servers auflisten und das Formular daraus ausfüllen.",
++    "settings.printers.discoverNone": "Keine Warteschlangen gefunden.",
++    "settings.printers.discoverTitle": "Drucker suchen",
++    "settings.printers.discovering": "Wird gesucht...",
++    "settings.printers.documentFormat": "Dokumentformat",
++    "settings.printers.editorEdit": "Drucker bearbeiten",
++    "settings.printers.editorNew": "Neuer Drucker",
++    "settings.printers.errors.deleteFailed": "Der Drucker konnte nicht gelöscht werden.",
++    "settings.printers.errors.hostRequired": "Bitte einen Host eingeben.",
++    "settings.printers.errors.nameRequired": "Bitte einen Namen eingeben.",
++    "settings.printers.errors.queueRequired": "Bitte eine Warteschlange eingeben.",
++    "settings.printers.errors.saveFailed": "Der Drucker konnte nicht gespeichert werden.",
++    "settings.printers.host": "Host",
++    "settings.printers.isDefault": "Als Standarddrucker verwenden",
++    "settings.printers.makeDefault": "Als Standard festlegen",
++    "settings.printers.name": "Name",
++    "settings.printers.namePlaceholder": "Etikettendrucker",
++    "settings.printers.none": "Keine Drucker eingerichtet.",
++    "settings.printers.port": "Port",
++    "settings.printers.queue": "Warteschlange",
++    "settings.printers.queueHint": "Name der Warteschlange auf dem Server, wie ihn die Druckersuche anzeigt.",
++    "settings.printers.save": "Drucker speichern",
++    "settings.printers.tab": "Etikettendrucker",
++    "settings.printers.test": "Verbindung testen",
++    "settings.printers.testFailed": "Drucker nicht erreichbar",
++    "settings.printers.testOk": "Drucker erreichbar",
++    "settings.printers.testing": "Wird getestet...",
++    "settings.printers.use": "Übernehmen",
++    "settings.printers.useTls": "Verschlüsselt (ipps)",
+     "spool.fields.archived": "Archiviert",
+     "spool.fields.comment": "Kommentar",
+     "spool.fields.filament": "Filament",
+diff --git a/client_v2/locales/en/common.json b/client_v2/locales/en/common.json
+index 82237d3..7f993d8 100644
+--- a/client_v2/locales/en/common.json
++++ b/client_v2/locales/en/common.json
+@@ -352,6 +352,14 @@
+     "printing.qrcode.useHTTPUrl.options.url": "URL",
+     "printing.qrcode.useHTTPUrl.preview": "Preview:",
+     "printing.qrcode.useHTTPUrl.tooltip": "Default encodes a Spoolman-only code that only Spoolman's own scanner can read. URL encodes a normal web link that any scanner can open, built from the base URL in settings — or this site's address if that's unset.",
++    "printing.server.failed": "Could not send to {{printer}}: {{error}}",
++    "printing.server.partial": "{{sent}} of {{total}} labels sent to {{printer}}, {{failed}} failed: {{error}}",
++    "printing.server.printN_one": "Send {{count}} label to printer",
++    "printing.server.printN_other": "Send {{count}} labels to printer",
++    "printing.server.printerLabel": "Printer",
++    "printing.server.sending": "Sending...",
++    "printing.server.sent_one": "{{count}} label sent to {{printer}}",
++    "printing.server.sent_other": "{{count}} labels sent to {{printer}}",
+     "printing.spoolSelect.selectedTotal_one": "{{count}} spool selected",
+     "printing.spoolSelect.selectedTotal_other": "{{count}} spools selected",
+     "scanner.description": "Scan a Spoolman QR code to view details about the spool.",
+@@ -434,6 +442,42 @@
+     "settings.library.lowThreshold.desc": "Spools at or below this weight are flagged red (this browser only)",
+     "settings.library.lowThreshold.label": "Low-stock threshold",
+     "settings.library.tab": "Library behavior",
++    "settings.printers.add": "Add printer",
++    "settings.printers.comment": "Comment",
++    "settings.printers.defaultBadge": "Default",
++    "settings.printers.deleteConfirm": "Delete printer {{name}}?",
++    "settings.printers.description": "Optional. Register a network label printer (IPP/CUPS) to send labels to it directly from the label designer. Without a printer here nothing changes: printing keeps using the browser print dialog.",
++    "settings.printers.discoverButton": "Search",
++    "settings.printers.discoverFailed": "Search failed: {{error}}",
++    "settings.printers.discoverHint": "List the print queues of a CUPS/IPP server and fill in the form from one of them.",
++    "settings.printers.discoverNone": "No print queues found.",
++    "settings.printers.discoverTitle": "Find printers",
++    "settings.printers.discovering": "Searching...",
++    "settings.printers.documentFormat": "Document format",
++    "settings.printers.editorEdit": "Edit printer",
++    "settings.printers.editorNew": "New printer",
++    "settings.printers.errors.deleteFailed": "Could not delete the printer.",
++    "settings.printers.errors.hostRequired": "Please enter a host.",
++    "settings.printers.errors.nameRequired": "Please enter a name.",
++    "settings.printers.errors.queueRequired": "Please enter a queue.",
++    "settings.printers.errors.saveFailed": "Could not save the printer.",
++    "settings.printers.host": "Host",
++    "settings.printers.isDefault": "Use as default printer",
++    "settings.printers.makeDefault": "Make default",
++    "settings.printers.name": "Name",
++    "settings.printers.namePlaceholder": "Label printer",
++    "settings.printers.none": "No printers configured.",
++    "settings.printers.port": "Port",
++    "settings.printers.queue": "Queue",
++    "settings.printers.queueHint": "The name of the print queue on the server, as listed by Find printers.",
++    "settings.printers.save": "Save printer",
++    "settings.printers.tab": "Label printers",
++    "settings.printers.test": "Test connection",
++    "settings.printers.testFailed": "Printer not reachable",
++    "settings.printers.testOk": "Printer reachable",
++    "settings.printers.testing": "Testing...",
++    "settings.printers.use": "Use",
++    "settings.printers.useTls": "Encrypted (ipps)",
+     "spool.fields.archived": "Archived",
+     "spool.fields.comment": "Comment",
+     "spool.fields.filament": "Filament",
+diff --git a/client_v2/src/lib/api/printers.test.ts b/client_v2/src/lib/api/printers.test.ts
+new file mode 100644
+index 0000000..4ad5ea8
+--- /dev/null
++++ b/client_v2/src/lib/api/printers.test.ts
+@@ -0,0 +1,38 @@
++import { describe, it, expect, vi } from 'vitest';
++
++// Only the pure helper is under test here; stub the base URL so importing the
++// module doesn't drag SvelteKit's runtime path resolution into a node test.
++vi.mock('./config', () => ({ API_BASE: 'http://spoolman.test/api/v1' }));
++
++import { dataUrlToBase64 } from './printers';
++
++// The print endpoint takes the raw base64 payload, not the data URL the canvas
++// hands us. Getting this wrong sends `data:image/png;base64,…` to the printer,
++// which the server can only reject — so it is worth pinning down.
++
++describe('dataUrlToBase64', () => {
++	it('drops the data URL prefix', () => {
++		expect(dataUrlToBase64('data:image/png;base64,iVBORw0KGgo=')).toBe('iVBORw0KGgo=');
++	});
++
++	it('handles other media types and parameters', () => {
++		expect(dataUrlToBase64('data:application/pdf;base64,JVBERi0=')).toBe('JVBERi0=');
++		expect(dataUrlToBase64('data:image/png;charset=utf-8;base64,AAAA')).toBe('AAAA');
++	});
++
++	it('keeps commas that belong to the payload', () => {
++		// Base64 never contains a comma, but slicing at the *first* one is what makes
++		// that true in practice — assert the split point rather than trusting it.
++		expect(dataUrlToBase64('data:image/png;base64,AA,BB')).toBe('AA,BB');
++	});
++
++	it('yields an empty payload for an empty image', () => {
++		expect(dataUrlToBase64('data:image/png;base64,')).toBe('');
++	});
++
++	it('rejects anything that is not base64-encoded', () => {
++		expect(() => dataUrlToBase64('data:image/svg+xml,<svg/>')).toThrow();
++		expect(() => dataUrlToBase64('https://example.com/label.png')).toThrow();
++		expect(() => dataUrlToBase64('')).toThrow();
++	});
++});
+diff --git a/client_v2/src/lib/api/printers.ts b/client_v2/src/lib/api/printers.ts
+new file mode 100644
+index 0000000..2c7db60
+--- /dev/null
++++ b/client_v2/src/lib/api/printers.ts
+@@ -0,0 +1,115 @@
++import { getJson, postJson, patchJson, deleteResource } from './http';
++
++// Network label printers (/api/v1/printer). Purely additive: with no printer
++// registered the client behaves exactly as before — the browser print dialog
++// stays the only way to print.
++
++/** A printer registered on the server, addressed over IPP (a CUPS queue). */
++export interface Printer {
++	id: number;
++	registered: string;
++	name: string;
++	host: string;
++	port: number;
++	queue: string;
++	use_tls: boolean;
++	is_default: boolean;
++	document_format: string;
++	comment: string | null;
++}
++
++/** Editable printer fields (POST body; PATCH takes any subset). */
++export interface PrinterParams {
++	name: string;
++	host: string;
++	port: number;
++	queue: string;
++	use_tls: boolean;
++	is_default: boolean;
++	/** IPP document-format MIME type, e.g. `image/png`. */
++	document_format: string;
++	comment?: string | null;
++}
++
++/** A print queue found on a CUPS/IPP server by `discoverPrinters`. */
++export interface DiscoveredPrinter {
++	name: string;
++	uri: string;
++	info: string | null;
++	location: string | null;
++	make_and_model: string | null;
++	state: number | null;
++}
++
++/**
++ * Outcome of a connection test. The endpoint answers 200 even for a printer it
++ * could not reach — `reachable` carries that verdict, `message` the detail.
++ */
++export interface PrinterTestResult {
++	reachable: boolean;
++	state: number | null;
++	message: string | null;
++}
++
++export interface PrintJobResult {
++	job_id: number | null;
++	printer_id: number;
++}
++
++export function listPrinters(signal?: AbortSignal): Promise<Printer[]> {
++	return getJson<Printer[]>('/printer', {}, signal);
++}
++
++export function getPrinter(id: number, signal?: AbortSignal): Promise<Printer> {
++	return getJson<Printer>(`/printer/${id}`, {}, signal);
++}
++
++export function createPrinter(params: PrinterParams): Promise<Printer> {
++	return postJson<Printer>('/printer', params);
++}
++
++export function updatePrinter(id: number, params: Partial<PrinterParams>): Promise<Printer> {
++	return patchJson<Printer>(`/printer/${id}`, params);
++}
++
++export function deletePrinter(id: number): Promise<void> {
++	return deleteResource(`/printer/${id}`);
++}
++
++/** List the queues an IPP/CUPS server offers, so they can be picked instead of typed. */
++export function discoverPrinters(
++	host: string,
++	port: number,
++	tls: boolean,
++	signal?: AbortSignal
++): Promise<DiscoveredPrinter[]> {
++	return getJson<DiscoveredPrinter[]>('/printer/discover', { host, port, tls: String(tls) }, signal);
++}
++
++export function testPrinter(id: number): Promise<PrinterTestResult> {
++	return postJson<PrinterTestResult>(`/printer/${id}/test`, {});
++}
++
++/** Send one already-encoded document to a printer. */
++export function printDocument(
++	id: number,
++	document_base64: string,
++	options: { job_name?: string; copies?: number } = {}
++): Promise<PrintJobResult> {
++	return postJson<PrintJobResult>(`/printer/${id}/print`, { document_base64, ...options });
++}
++
++/**
++ * Strip the `data:<mime>;base64,` prefix off a data URL, leaving the payload the
++ * print endpoint wants. Rasterized labels always arrive base64-encoded (that is
++ * what `HTMLCanvasElement.toDataURL` produces), so anything else is a bug worth
++ * surfacing rather than a string to pass along and have the server reject.
++ */
++export function dataUrlToBase64(dataUrl: string): string {
++	const comma = dataUrl.indexOf(',');
++	const header = comma === -1 ? '' : dataUrl.slice(0, comma);
++	if (!/^data:[^,]*;base64$/i.test(header)) {
++		throw new Error('Expected a base64 data URL');
++	}
++	return dataUrl.slice(comma + 1);
++}
+diff --git a/client_v2/src/lib/components/labels/PrintLayoutPanel.svelte b/client_v2/src/lib/components/labels/PrintLayoutPanel.svelte
+index 85d066c..9510f2e 100644
+--- a/client_v2/src/lib/components/labels/PrintLayoutPanel.svelte
++++ b/client_v2/src/lib/components/labels/PrintLayoutPanel.svelte
+@@ -7,11 +7,14 @@
+ 	import type { LabelBinding } from '$lib/labels/template';
+ 	import { PAPER_NAMES, paperSize, sheetGrid } from '$lib/labels/paper';
+ 	import { printLabels, saveLabelImages, ZIP_THRESHOLD } from '$lib/labels/print';
++	import { printLabelsToServer } from '$lib/labels/serverPrint';
+ 	import { spoolSource } from '$lib/api/spoolSource';
+ 	import { searchAll } from '$lib/api/search';
+ 	import { isAbortError } from '$lib/api/http';
+ 	import { inventory } from '$lib/stores/inventory.svelte';
++	import { printers } from '$lib/stores/printers.svelte';
+ 	import { settings } from '$lib/stores/settings.svelte';
++	import { toasts } from '$lib/stores/toasts.svelte';
+ 	import type { Spool, Filament } from '$lib/types';
+ 	import * as m from '$lib/paraglide/messages';
+ 
+@@ -310,6 +313,61 @@
+ 		}
+ 	}
+ 
++	// --- Server-side printing (optional) -----------------------------------------
++	// Only ever visible once the user has registered a printer under Settings; with
++	// none configured this whole path stays dormant and the browser print dialog
++	// remains the only way to print.
++	let serverPrinting = $state(false);
++	let chosenPrinterId = $state<number | null>(null);
++	$effect(() => {
++		printers.ensure();
++	});
++	// The picker is a preference, not a target: an unset (or since-removed) choice
++	// falls back to the configured default printer.
++	const targetPrinter = $derived(
++		printers.printers.find((p) => p.id === chosenPrinterId) ?? printers.defaultPrinter
++	);
++
++	async function doServerPrint() {
++		const printer = targetPrinter;
++		if (bindings.length === 0 || !printer) return;
++		serverPrinting = true;
++		try {
++			const res = await printLabelsToServer({
++				design,
++				bindings,
++				layout,
++				baseUrl: settings.baseUrl,
++				printerId: printer.id
++			});
++			if (res.failed === 0) {
++				toasts.success(m['printing.server.sent']({ count: res.sent, printer: printer.name }));
++			} else if (res.sent === 0) {
++				toasts.error(m['printing.server.failed']({ printer: printer.name, error: res.error ?? '' }));
++			} else {
++				toasts.error(
++					m['printing.server.partial']({
++						sent: res.sent,
++						total: res.total,
++						printer: printer.name,
++						failed: res.failed,
++						error: res.error ?? ''
++					})
++				);
++			}
++		} catch (e) {
++			console.error('Server print failed', e);
++			toasts.error(
++				m['printing.server.failed']({
++					printer: printer.name,
++					error: e instanceof Error ? e.message : String(e)
++				})
++			);
++		} finally {
++			serverPrinting = false;
++		}
++	}
++
+ 	async function doSaveImages() {
+ 		if (bindings.length === 0) return;
+ 		saving = true;
+@@ -672,6 +730,28 @@
+ 						? m['labels.preparing']()
+ 						: m['labels.printN']({ count: bindings.length * Math.max(1, layout.copies) })}
+ 				</Button>
++				<!-- Additive: appears only once a printer is configured under Settings. -->
++				{#if printers.printers.length > 0}
++					{#if printers.printers.length > 1}
++						<select
++							class="printer-pick"
++							aria-label={m['printing.server.printerLabel']()}
++							value={targetPrinter?.id ?? ''}
++							onchange={(e) => (chosenPrinterId = Number(e.currentTarget.value))}
++						>
++							{#each printers.printers as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
++						</select>
++					{/if}
++					<Button
++						variant="outline"
++						onclick={doServerPrint}
++						disabled={bindings.length === 0 || serverPrinting || !targetPrinter}
++					>
++						{serverPrinting
++							? m['printing.server.sending']()
++							: m['printing.server.printN']({ count: bindings.length })}
++					</Button>
++				{/if}
+ 			{/if}
+ 		</div>
+ 	</div>
+@@ -904,6 +984,17 @@
+ 	.small {
+ 		font-size: 11px;
+ 	}
++	/* Sits next to the print buttons; only rendered with several printers configured. */
++	.printer-pick {
++		border: 1px solid var(--border-strong);
++		background: none;
++		border-radius: 6px;
++		padding: 7px 9px;
++		color: var(--text);
++		font-size: 12.5px;
++		font-family: inherit;
++		max-width: 160px;
++	}
+ 	.print-btn {
+ 		display: flex;
+ 		align-items: center;
+diff --git a/client_v2/src/lib/components/settings/PrinterSettings.svelte b/client_v2/src/lib/components/settings/PrinterSettings.svelte
+new file mode 100644
+index 0000000..01e983d
+--- /dev/null
++++ b/client_v2/src/lib/components/settings/PrinterSettings.svelte
+@@ -0,0 +1,570 @@
++<script lang="ts">
++	import Card from '../Card.svelte';
++	import {
++		discoverPrinters,
++		testPrinter,
++		type DiscoveredPrinter,
++		type Printer,
++		type PrinterParams
++	} from '$lib/api/printers';
++	import { printers } from '$lib/stores/printers.svelte';
++	import * as m from '$lib/paraglide/messages';
++	import Plus from '@lucide/svelte/icons/plus';
++
++	// Manages the (optional) network label printers. Everything here is opt-in:
++	// with no printer configured the label designer keeps printing through the
++	// browser dialog exactly as before.
++
++	const DEFAULT_PORT = 631;
++	// What the server may be asked to send. PNG first: that is what the label
++	// rasterizer produces, and what the print action actually uploads.
++	const DOCUMENT_FORMATS = ['image/png', 'image/jpeg', 'application/pdf', 'application/octet-stream'];
++
++	$effect(() => {
++		printers.ensure();
++	});
++
++	// Editor ------------------------------------------------------------------
++	let editing = $state(false);
++	let editId = $state<number | null>(null);
++	let saving = $state(false);
++	let error = $state('');
++
++	let name = $state('');
++	let host = $state('');
++	let port = $state(DEFAULT_PORT);
++	let queue = $state('');
++	let useTls = $state(false);
++	let isDefault = $state(false);
++	let documentFormat = $state(DOCUMENT_FORMATS[0]);
++	let comment = $state('');
++
++	function startAdd() {
++		editing = true;
++		editId = null;
++		error = '';
++		name = '';
++		host = '';
++		port = DEFAULT_PORT;
++		queue = '';
++		useTls = false;
++		// A first printer is the default one — there is nothing else it could be.
++		isDefault = printers.printers.length === 0;
++		documentFormat = DOCUMENT_FORMATS[0];
++		comment = '';
++	}
++
++	function startEdit(p: Printer) {
++		editing = true;
++		editId = p.id;
++		error = '';
++		name = p.name;
++		host = p.host;
++		port = p.port;
++		queue = p.queue;
++		useTls = p.use_tls;
++		isDefault = p.is_default;
++		documentFormat = p.document_format || DOCUMENT_FORMATS[0];
++		comment = p.comment ?? '';
++	}
++
++	function cancel() {
++		editing = false;
++		error = '';
++	}
++
++	function describe(e: unknown, fallback: string): string {
++		return e instanceof Error && e.message ? e.message : fallback;
++	}
++
++	async function save() {
++		error = '';
++		if (!name.trim()) {
++			error = m['settings.printers.errors.nameRequired']();
++			return;
++		}
++		if (!host.trim()) {
++			error = m['settings.printers.errors.hostRequired']();
++			return;
++		}
++		if (!queue.trim()) {
++			error = m['settings.printers.errors.queueRequired']();
++			return;
++		}
++
++		const params: PrinterParams = {
++			name: name.trim(),
++			host: host.trim(),
++			port: Math.max(1, Math.round(port) || DEFAULT_PORT),
++			queue: queue.trim(),
++			use_tls: useTls,
++			is_default: isDefault,
++			document_format: documentFormat,
++			comment: comment.trim() ? comment.trim() : null
++		};
++
++		saving = true;
++		try {
++			if (editId === null) await printers.create(params);
++			else await printers.update(editId, params);
++			editing = false;
++		} catch (e) {
++			error = describe(e, m['settings.printers.errors.saveFailed']());
++		} finally {
++			saving = false;
++		}
++	}
++
++	async function del(p: Printer) {
++		if (!confirm(m['settings.printers.deleteConfirm']({ name: p.name }))) return;
++		error = '';
++		try {
++			await printers.remove(p.id);
++			if (editId === p.id) editing = false;
++		} catch (e) {
++			error = describe(e, m['settings.printers.errors.deleteFailed']());
++		}
++	}
++
++	async function makeDefault(p: Printer) {
++		error = '';
++		try {
++			await printers.makeDefault(p.id);
++		} catch (e) {
++			error = describe(e, m['settings.printers.errors.saveFailed']());
++		}
++	}
++
++	// Connection test ----------------------------------------------------------
++	interface TestState {
++		running: boolean;
++		ok?: boolean;
++		message?: string;
++	}
++	// Keyed by printer id. A plain object (not a Map) so it stays reactive as a
++	// whole when reassigned, which is all this needs.
++	let tests = $state<Record<number, TestState>>({});
++
++	async function runTest(p: Printer) {
++		tests = { ...tests, [p.id]: { running: true } };
++		try {
++			const res = await testPrinter(p.id);
++			tests = {
++				...tests,
++				[p.id]: {
++					running: false,
++					ok: res.reachable,
++					message:
++						res.message ??
++						(res.reachable ? m['settings.printers.testOk']() : m['settings.printers.testFailed']())
++				}
++			};
++		} catch (e) {
++			// The endpoint answers 200 even for an unreachable printer, so landing
++			// here means the request itself failed — still the user's answer.
++			tests = {
++				...tests,
++				[p.id]: { running: false, ok: false, message: describe(e, m['settings.printers.testFailed']()) }
++			};
++		}
++	}
++
++	// Discovery ----------------------------------------------------------------
++	let dHost = $state('');
++	let dPort = $state(DEFAULT_PORT);
++	let dTls = $state(false);
++	let discovering = $state(false);
++	let discovered = $state<DiscoveredPrinter[] | null>(null);
++	let dError = $state('');
++
++	async function runDiscover() {
++		if (!dHost.trim()) {
++			dError = m['settings.printers.errors.hostRequired']();
++			return;
++		}
++		dError = '';
++		discovering = true;
++		try {
++			discovered = await discoverPrinters(dHost.trim(), Math.max(1, Math.round(dPort) || DEFAULT_PORT), dTls);
++		} catch (e) {
++			discovered = null;
++			dError = m['settings.printers.discoverFailed']({ error: describe(e, '') });
++		} finally {
++			discovering = false;
++		}
++	}
++
++	/** Fill the editor from a discovered queue, so it only needs confirming. */
++	function useDiscovered(d: DiscoveredPrinter) {
++		startAdd();
++		host = dHost.trim();
++		port = Math.max(1, Math.round(dPort) || DEFAULT_PORT);
++		useTls = dTls;
++		queue = d.name;
++		name = d.info?.trim() || d.make_and_model?.trim() || d.name;
++		comment = [d.make_and_model, d.location].filter((s): s is string => !!s && !!s.trim()).join(' · ');
++	}
++</script>
++
++<Card>
++	{#if printers.printers.length === 0}
++		<div class="empty">{m['settings.printers.none']()}</div>
++	{:else}
++		<div class="table">
++			{#each printers.printers as p (p.id)}
++				<div class="row">
++					<div class="main">
++						<div class="name">
++							{p.name}
++							{#if p.is_default}<span class="badge">{m['settings.printers.defaultBadge']()}</span>{/if}
++						</div>
++						<div class="addr mono">
++							{p.use_tls ? 'ipps' : 'ipp'}://{p.host}:{p.port}/{p.queue}
++						</div>
++						{#if p.comment}<div class="cmt">{p.comment}</div>{/if}
++						{#if tests[p.id]}
++							<div class="test" class:bad={tests[p.id].ok === false}>
++								{tests[p.id].running ? m['settings.printers.testing']() : (tests[p.id].message ?? '')}
++							</div>
++						{/if}
++					</div>
++					<div class="acts">
++						<button class="mini" onclick={() => runTest(p)} disabled={tests[p.id]?.running}
++							>{m['settings.printers.test']()}</button
++						>
++						{#if !p.is_default}
++							<button class="mini" onclick={() => makeDefault(p)}
++								>{m['settings.printers.makeDefault']()}</button
++							>
++						{/if}
++						<button class="mini" onclick={() => startEdit(p)}>{m['buttons.edit']()}</button>
++						<button class="mini danger" onclick={() => del(p)}>{m['buttons.delete']()}</button>
++					</div>
++				</div>
++			{/each}
++		</div>
++	{/if}
++</Card>
++
++<div class="discover">
++	<div class="editor-title">{m['settings.printers.discoverTitle']()}</div>
++	<p class="hint">{m['settings.printers.discoverHint']()}</p>
++	<div class="discover-form">
++		<label class="fld">
++			<span>{m['settings.printers.host']()}</span>
++			<input class="in" bind:value={dHost} placeholder="cups.local" />
++		</label>
++		<label class="fld narrow">
++			<span>{m['settings.printers.port']()}</span>
++			<input class="in mono" type="number" min="1" max="65535" bind:value={dPort} />
++		</label>
++		<label class="chk">
++			<input type="checkbox" bind:checked={dTls} />
++			{m['settings.printers.useTls']()}
++		</label>
++		<button class="btn ghost" onclick={runDiscover} disabled={discovering}>
++			{discovering ? m['settings.printers.discovering']() : m['settings.printers.discoverButton']()}
++		</button>
++	</div>
++	{#if dError}<div class="error">{dError}</div>{/if}
++	{#if discovered}
++		{#if discovered.length === 0}
++			<div class="hint">{m['settings.printers.discoverNone']()}</div>
++		{:else}
++			<div class="found">
++				{#each discovered as d (d.uri)}
++					<div class="row">
++						<div class="main">
++							<div class="name">{d.info?.trim() || d.name}</div>
++							<div class="addr mono">{d.uri}</div>
++							{#if d.make_and_model || d.location}
++								<div class="cmt">{[d.make_and_model, d.location].filter(Boolean).join(' · ')}</div>
++							{/if}
++						</div>
++						<div class="acts">
++							<button class="mini" onclick={() => useDiscovered(d)}>{m['settings.printers.use']()}</button>
++						</div>
++					</div>
++				{/each}
++			</div>
++		{/if}
++	{/if}
++</div>
++
++{#if editing}
++	<div class="editor">
++		<div class="editor-title">
++			{editId === null ? m['settings.printers.editorNew']() : m['settings.printers.editorEdit']()}
++		</div>
++		<div class="form">
++			<label class="fld">
++				<span>{m['settings.printers.name']()}</span>
++				<input class="in" bind:value={name} placeholder={m['settings.printers.namePlaceholder']()} />
++			</label>
++			<label class="fld">
++				<span>{m['settings.printers.host']()}</span>
++				<input class="in" bind:value={host} placeholder="cups.local" />
++			</label>
++			<label class="fld">
++				<span>{m['settings.printers.port']()}</span>
++				<input class="in mono" type="number" min="1" max="65535" bind:value={port} />
++			</label>
++			<label class="fld">
++				<span>{m['settings.printers.queue']()}</span>
++				<input class="in" bind:value={queue} placeholder="DYMO_LabelWriter" />
++			</label>
++			<label class="fld">
++				<span>{m['settings.printers.documentFormat']()}</span>
++				<select class="in" bind:value={documentFormat}>
++					{#each DOCUMENT_FORMATS as f (f)}<option value={f}>{f}</option>{/each}
++				</select>
++			</label>
++			<div class="fld">
++				<span>&nbsp;</span>
++				<div class="checks">
++					<label class="chk"
++						><input type="checkbox" bind:checked={useTls} />{m['settings.printers.useTls']()}</label
++					>
++					<label class="chk"
++						><input type="checkbox" bind:checked={isDefault} />{m['settings.printers.isDefault']()}</label
++					>
++				</div>
++			</div>
++			<label class="fld wide">
++				<span>{m['settings.printers.comment']()}</span>
++				<input class="in" bind:value={comment} />
++			</label>
++		</div>
++		<p class="hint">{m['settings.printers.queueHint']()}</p>
++
++		{#if error}<div class="error">{error}</div>{/if}
++
++		<div class="editor-actions">
++			<button class="btn ghost" onclick={cancel}>{m['buttons.cancel']()}</button>
++			<button class="btn primary" onclick={save} disabled={saving}
++				>{saving ? m['labels.saving']() : m['settings.printers.save']()}</button
++			>
++		</div>
++	</div>
++{:else}
++	<button class="add-btn" onclick={startAdd}><Plus size={14} /> {m['settings.printers.add']()}</button>
++{/if}
++
++<style>
++	.empty {
++		padding: 16px 14px;
++		font-size: 12.5px;
++		color: var(--text-dim);
++	}
++	.row {
++		display: flex;
++		align-items: center;
++		gap: 12px;
++		padding: 10px 14px;
++		font-size: 12.5px;
++	}
++	.table .row:not(:first-child),
++	.found .row:not(:first-child) {
++		border-top: 1px solid var(--border-soft);
++	}
++	.main {
++		flex: 1;
++		min-width: 0;
++	}
++	.name {
++		display: flex;
++		align-items: center;
++		gap: 7px;
++		color: var(--text);
++	}
++	.addr,
++	.cmt {
++		font-size: 11.5px;
++		color: var(--text-dim);
++		overflow: hidden;
++		text-overflow: ellipsis;
++		white-space: nowrap;
++	}
++	.badge {
++		background: var(--accent-wash);
++		border: 1px solid var(--accent-border);
++		color: var(--accent-soft);
++		border-radius: var(--radius-sm);
++		padding: 1px 6px;
++		font-size: 10.5px;
++		font-weight: 600;
++		text-transform: uppercase;
++		letter-spacing: 0.04em;
++	}
++	.test {
++		margin-top: 3px;
++		font-size: 11.5px;
++		color: var(--accent-soft);
++	}
++	.test.bad {
++		color: var(--danger-soft);
++	}
++	.acts {
++		display: flex;
++		flex-wrap: wrap;
++		gap: 6px;
++		justify-content: flex-end;
++	}
++	.mini {
++		padding: 3px 9px;
++		border-radius: var(--radius-sm);
++		border: 1px solid var(--border-strong);
++		background: none;
++		color: var(--text-2);
++		font-size: 11.5px;
++		cursor: pointer;
++		font-family: inherit;
++	}
++	.mini:hover {
++		border-color: var(--accent);
++	}
++	.mini:disabled {
++		opacity: 0.5;
++		cursor: default;
++	}
++	.mini.danger:hover {
++		border-color: var(--danger);
++		color: var(--danger-soft);
++	}
++	.discover,
++	.editor {
++		margin-top: 12px;
++		background: var(--surface);
++		border: 1px solid var(--border);
++		border-radius: var(--radius-lg);
++		padding: 14px;
++	}
++	.editor {
++		border-color: var(--accent-border);
++	}
++	.editor-title {
++		font-weight: 600;
++		font-size: 13px;
++	}
++	.discover-form {
++		display: flex;
++		flex-wrap: wrap;
++		align-items: flex-end;
++		gap: 10px;
++	}
++	.found {
++		margin-top: 10px;
++		border: 1px solid var(--border-soft);
++		border-radius: var(--radius);
++	}
++	.form {
++		display: grid;
++		grid-template-columns: repeat(2, minmax(0, 1fr));
++		gap: 12px;
++		margin-top: 12px;
++	}
++	.fld {
++		display: flex;
++		flex-direction: column;
++		gap: 5px;
++		font-size: 11.5px;
++		color: var(--text-muted);
++		min-width: 0;
++	}
++	.fld.wide {
++		grid-column: 1 / -1;
++	}
++	.discover-form .fld {
++		flex: 1;
++		min-width: 140px;
++	}
++	.discover-form .fld.narrow {
++		flex: none;
++		width: 90px;
++	}
++	.in {
++		background: var(--input-bg);
++		border: 1px solid var(--border-input);
++		border-radius: var(--radius);
++		color: var(--text);
++		padding: 7px 10px;
++		font-size: 13px;
++		min-width: 0;
++		font-family: inherit;
++	}
++	.checks {
++		display: flex;
++		flex-wrap: wrap;
++		gap: 12px;
++		padding: 7px 0;
++	}
++	.chk {
++		display: flex;
++		align-items: center;
++		gap: 7px;
++		font-size: 12.5px;
++		color: var(--text-2);
++		cursor: pointer;
++	}
++	.hint {
++		margin: 6px 0 0;
++		font-size: 11.5px;
++		line-height: 1.4;
++		color: var(--text-dim);
++	}
++	.error {
++		margin-top: 10px;
++		color: var(--danger-soft);
++		font-size: 12px;
++	}
++	.editor-actions {
++		display: flex;
++		justify-content: flex-end;
++		gap: 8px;
++		margin-top: 14px;
++	}
++	.btn {
++		border-radius: var(--radius);
++		padding: 8px 14px;
++		font-size: 12.5px;
++		font-weight: 600;
++		cursor: pointer;
++		border: 1px solid transparent;
++		font-family: inherit;
++	}
++	.btn.ghost {
++		background: none;
++		border-color: var(--border-strong);
++		color: var(--text-2);
++	}
++	.btn.primary {
++		background: var(--accent-fill);
++		color: #fff;
++	}
++	.btn.primary:hover {
++		background: var(--accent-fill-hover);
++	}
++	.btn:disabled {
++		opacity: 0.6;
++		cursor: default;
++	}
++	.add-btn {
++		margin-top: 12px;
++		border: 1px dashed var(--accent-border);
++		color: var(--accent-link);
++		border-radius: var(--radius);
++		padding: 8px 14px;
++		font-size: 12.5px;
++		cursor: pointer;
++		background: none;
++		font-family: inherit;
++	}
++	.add-btn:hover {
++		border-color: var(--accent);
++	}
++	@media (max-width: 620px) {
++		.form {
++			grid-template-columns: 1fr;
++		}
++	}
++</style>
+diff --git a/client_v2/src/lib/labels/serverPrint.ts b/client_v2/src/lib/labels/serverPrint.ts
+new file mode 100644
+index 0000000..79650fe
+--- /dev/null
++++ b/client_v2/src/lib/labels/serverPrint.ts
+@@ -0,0 +1,69 @@
++import { dataUrlToBase64, printDocument } from '$lib/api/printers';
++import { getLogoImage } from './logo';
++import { renderLabelDataUrl, resolveDpi } from './print';
++import type { LabelBinding } from './template';
++import type { LabelDesign, PrintLayout } from './types';
++
++// Sends labels to a server-side printer instead of the browser's print dialog.
++//
++// The rasterization is the same one the browser print uses (renderLabelDataUrl),
++// so a label looks identical either way; only the delivery differs. Nothing in
++// here runs unless the user has configured a printer and pressed the extra
++// button — the browser path is untouched.
++
++export interface ServerPrintJob {
++	design: LabelDesign;
++	bindings: LabelBinding[];
++	layout: PrintLayout;
++	baseUrl: string;
++	printerId: number;
++}
++
++export interface ServerPrintResult {
++	/** Labels attempted (spools/filaments, not copies). */
++	total: number;
++	sent: number;
++	failed: number;
++	/** Message of the first failure, for a one-line summary. */
++	error?: string;
++}
++
++/**
++ * Rasterize each selected label and post it to the printer, one request per
++ * label. Sequential on purpose: a print queue is a single physical device, and
++ * pipelining a batch at it only makes the failure modes harder to explain.
++ *
++ * A label that fails is counted and the run continues — one unprintable label
++ * shouldn't cost the user the rest of the batch.
++ */
++export async function printLabelsToServer({
++	design,
++	bindings,
++	layout,
++	baseUrl,
++	printerId
++}: ServerPrintJob): Promise<ServerPrintResult> {
++	const result: ServerPrintResult = { total: bindings.length, sent: 0, failed: 0 };
++	if (bindings.length === 0) return result;
++
++	const logoImage = await getLogoImage().catch(() => null);
++	const dpi = resolveDpi(layout);
++	const copies = Math.max(1, layout.copies);
++
++	for (const binding of bindings) {
++		const subjectId = binding.spool?.id ?? binding.filament?.id;
++		try {
++			const dataUrl = renderLabelDataUrl(design, binding, baseUrl, logoImage, dpi);
++			await printDocument(printerId, dataUrlToBase64(dataUrl), {
++				job_name: `spoolman-label-${subjectId ?? 'unknown'}`,
++				copies
++			});
++			result.sent++;
++		} catch (e) {
++			console.error('Server print failed for label', subjectId, e);
++			result.failed++;
++			result.error ??= e instanceof Error ? e.message : String(e);
++		}
++	}
++	return result;
++}
+diff --git a/client_v2/src/lib/stores/printers.svelte.ts b/client_v2/src/lib/stores/printers.svelte.ts
+new file mode 100644
+index 0000000..7e48643
+--- /dev/null
++++ b/client_v2/src/lib/stores/printers.svelte.ts
+@@ -0,0 +1,88 @@
++import {
++	createPrinter,
++	deletePrinter,
++	listPrinters,
++	updatePrinter,
++	type Printer,
++	type PrinterParams
++} from '$lib/api/printers';
++
++// Reactive, server-backed list of label printers. Mirrors labelDesigns.svelte.ts:
++// a singleton runes class, loaded once on demand, mutations written straight
++// through to the API.
++//
++// Everything here is opt-in — an installation with no printers keeps an empty
++// list, and the UI that consumes it stays hidden.
++
++/**
++ * The printer a print job should go to when the user hasn't picked one: the one
++ * flagged as default, else the first configured, else nothing at all.
++ */
++export function pickDefaultPrinter(list: readonly Printer[]): Printer | null {
++	return list.find((p) => p.is_default) ?? list[0] ?? null;
++}
++
++class Printers {
++	printers = $state<Printer[]>([]);
++	loaded = $state(false);
++	/** Where a print goes unless the user chooses otherwise; null when unconfigured. */
++	defaultPrinter = $derived(pickDefaultPrinter(this.printers));
++
++	#loading = false;
++
++	/** Load once (idempotent), for views that just need the list to be there. */
++	ensure(): void {
++		if (!this.loaded && !this.#loading) void this.load();
++	}
++
++	/**
++	 * Fetch the list. A failure here must not take the page down with it — a
++	 * server without the printer endpoints (or one that is simply unhappy) should
++	 * leave the client exactly as it was before server printing existed.
++	 */
++	async load(force = false): Promise<void> {
++		if (this.loaded && !force) return;
++		this.#loading = true;
++		try {
++			this.printers = await listPrinters();
++		} catch (e) {
++			console.error('Failed to load printers', e);
++		} finally {
++			this.#loading = false;
++			this.loaded = true;
++		}
++	}
++
++	/**
++	 * Re-read the list after a mutation. The default flag is exclusive and enforced
++	 * server-side, so a write can change rows we didn't touch; refetching keeps the
++	 * view honest instead of guessing at those side effects.
++	 */
++	async refresh(): Promise<void> {
++		await this.load(true);
++	}
++
++	async create(params: PrinterParams): Promise<Printer> {
++		const printer = await createPrinter(params);
++		await this.refresh();
++		return printer;
++	}
++
++	async update(id: number, params: Partial<PrinterParams>): Promise<Printer> {
++		const printer = await updatePrinter(id, params);
++		await this.refresh();
++		return printer;
++	}
++
++	async remove(id: number): Promise<void> {
++		await deletePrinter(id);
++		await this.refresh();
++	}
++
++	/** Make `id` the printer new jobs go to by default. */
++	async makeDefault(id: number): Promise<void> {
++		await this.update(id, { is_default: true });
++	}
++}
++
++export const printers = new Printers();
+diff --git a/client_v2/src/lib/stores/printers.test.ts b/client_v2/src/lib/stores/printers.test.ts
+new file mode 100644
+index 0000000..a92b8d7
+--- /dev/null
++++ b/client_v2/src/lib/stores/printers.test.ts
+@@ -0,0 +1,61 @@
++import { describe, it, expect, vi } from 'vitest';
++
++// The store talks to the API on construction of nothing, but importing it pulls
++// the client in; stub it so this stays a pure test of the selection rule.
++vi.mock('$lib/api/printers', () => ({
++	listPrinters: vi.fn(),
++	createPrinter: vi.fn(),
++	updatePrinter: vi.fn(),
++	deletePrinter: vi.fn()
++}));
++
++import { pickDefaultPrinter, printers } from './printers.svelte';
++import type { Printer } from '$lib/api/printers';
++
++function printer(id: number, is_default = false): Printer {
++	return {
++		id,
++		registered: '2024-01-01T00:00:00Z',
++		name: `Printer ${id}`,
++		host: 'cups.local',
++		port: 631,
++		queue: `q${id}`,
++		use_tls: false,
++		is_default,
++		document_format: 'image/png',
++		comment: null
++	};
++}
++
++// Which printer a job goes to when the user didn't pick one. The fallback chain
++// matters: a fresh install has no default flag set anywhere, and a user with one
++// printer should still be able to print without first marking it.
++describe('pickDefaultPrinter', () => {
++	it('prefers the printer flagged as default', () => {
++		const list = [printer(1), printer(2, true), printer(3)];
++		expect(pickDefaultPrinter(list)?.id).toBe(2);
++	});
++
++	it('falls back to the first printer when nothing is flagged', () => {
++		expect(pickDefaultPrinter([printer(7), printer(8)])?.id).toBe(7);
++	});
++
++	it('returns null when no printer is configured', () => {
++		expect(pickDefaultPrinter([])).toBeNull();
++	});
++
++	it('takes the first flagged printer if several claim to be default', () => {
++		expect(pickDefaultPrinter([printer(1), printer(2, true), printer(3, true)])?.id).toBe(2);
++	});
++});
++
++describe('printers store', () => {
++	it('tracks the default as the list changes', () => {
++		printers.printers = [printer(1), printer(2, true)];
++		expect(printers.defaultPrinter?.id).toBe(2);
++		printers.printers = [printer(3)];
++		expect(printers.defaultPrinter?.id).toBe(3);
++		printers.printers = [];
++		expect(printers.defaultPrinter).toBeNull();
++	});
++});
+diff --git a/client_v2/src/routes/settings/+page.svelte b/client_v2/src/routes/settings/+page.svelte
+index 75254a8..9d56c84 100644
+--- a/client_v2/src/routes/settings/+page.svelte
++++ b/client_v2/src/routes/settings/+page.svelte
+@@ -3,6 +3,7 @@
+ 	import Card from '$components/Card.svelte';
+ 	import SettingRow from '$components/settings/SettingRow.svelte';
+ 	import ExtraFieldsManager from '$components/settings/ExtraFieldsManager.svelte';
++	import PrinterSettings from '$components/settings/PrinterSettings.svelte';
+ 	import { settings } from '$lib/stores/settings.svelte';
+ 	import { theme, type ThemePref } from '$lib/stores/theme.svelte';
+ 	import { locales, getLocale, setLocale, isLocale } from '$lib/paraglide/runtime.js';
+@@ -132,6 +133,12 @@
+ 			</SettingRow>
+ 		</Card>
+ 
++		<div class="sec-label">{m['settings.printers.tab']()}</div>
++		<div class="subtitle sub2">
++			<p>{m['settings.printers.description']()}</p>
++		</div>
++		<PrinterSettings />
++
+ 		<div class="sec-label" id={EXTRA_FIELDS_ANCHOR}>{m['settings.extraFields.tab']()}</div>
+ 		<div class="subtitle sub2">
+ 			<p>{m['settings.extraFields.description.intro']()}</p>

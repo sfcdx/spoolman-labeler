@@ -1,0 +1,558 @@
+From 041b7f3c8a45db77a2a4ff325f1be8e87de09572 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 2 Aug 2026 18:16:29 +0000
+Subject: [PATCH 1/4] feat(printing): add a minimal IPP client
+
+Speaks just enough IPP (RFC 8011) to submit a document, read a job's state,
+query a printer and list a CUPS server's queues.
+
+Deliberately not pycups: that is a C extension against libcups and would add
+libcups2-dev plus a compile step to the Docker build for everyone, including
+users who never print from the server. IPP is a binary payload over HTTP POST,
+so this encodes it directly using httpx, which is already a dependency. No new
+dependency, no new system package.
+---
+ spoolman/printing/__init__.py |   1 +
+ spoolman/printing/ipp.py      | 370 ++++++++++++++++++++++++++++++++++
+ tests/test_ipp.py             | 147 ++++++++++++++
+ 3 files changed, 518 insertions(+)
+ create mode 100644 spoolman/printing/__init__.py
+ create mode 100644 spoolman/printing/ipp.py
+ create mode 100644 tests/test_ipp.py
+
+diff --git a/spoolman/printing/__init__.py b/spoolman/printing/__init__.py
+new file mode 100644
+index 0000000..dcba87b
+--- /dev/null
++++ b/spoolman/printing/__init__.py
+@@ -0,0 +1 @@
++"""Server-side printing: hand a rendered label straight to a printer."""
+diff --git a/spoolman/printing/ipp.py b/spoolman/printing/ipp.py
+new file mode 100644
+index 0000000..410e83f
+--- /dev/null
++++ b/spoolman/printing/ipp.py
+@@ -0,0 +1,370 @@
++"""A deliberately small IPP client, built on httpx.
++
++Spoolman can hand a rendered label straight to a printer instead of going
++through the browser's print dialog. That needs to speak IPP (RFC 8011), which
++is what CUPS, AirPrint and virtually every network label printer expose.
++
++The obvious library for this would be ``pycups``, but it is a C extension
++binding against libcups: it would add ``libcups2-dev`` plus a compile step to
++the Docker build for every user, including everyone who never prints from the
++server. IPP is simply a binary payload over HTTP POST, and the handful of
++operations needed here are small enough to encode directly — so this module
++implements them with ``httpx``, which Spoolman already depends on. No new
++dependency, no new system package.
++
++Only what is actually used is implemented. Anything the printer sends back
++beyond the attributes below is skipped over rather than parsed.
++"""
++
++import logging
++import struct
++from dataclasses import dataclass
++from enum import IntEnum
++from typing import Any
++
++import httpx
++
++logger = logging.getLogger(__name__)
++
++# RFC 8011 section 4.1.8 — we speak 1.1, which every implementation accepts.
++_VERSION = (1, 1)
++
++
++# Operation ids (RFC 8011 section 5.4.15, plus the CUPS vendor extension).
++class Operation(IntEnum):
++    """The IPP operations this client issues."""
++
++    PRINT_JOB = 0x0002
++    GET_JOB_ATTRIBUTES = 0x0009
++    GET_PRINTER_ATTRIBUTES = 0x000B
++    #: CUPS vendor extension: list the queues a CUPS server offers.
++    CUPS_GET_PRINTERS = 0x4002
++
++
++# Delimiter tags (RFC 8011 section 3.5.1).
++_TAG_OPERATION_ATTRIBUTES = 0x01
++_TAG_JOB_ATTRIBUTES = 0x02
++_TAG_END_OF_ATTRIBUTES = 0x03
++_TAG_PRINTER_ATTRIBUTES = 0x04
++_DELIMITER_TAGS = frozenset({0x01, 0x02, 0x03, 0x04, 0x05})
++
++# Value tags (RFC 8011 section 3.5.2).
++_TAG_INTEGER = 0x21
++_TAG_BOOLEAN = 0x22
++_TAG_ENUM = 0x23
++_TAG_TEXT = 0x41
++_TAG_NAME = 0x42
++_TAG_KEYWORD = 0x44
++_TAG_URI = 0x45
++_TAG_CHARSET = 0x47
++_TAG_NATURAL_LANGUAGE = 0x48
++_TAG_MIME_MEDIA_TYPE = 0x49
++
++_INTEGER_TAGS = frozenset({_TAG_INTEGER, _TAG_ENUM})
++_STRING_TAGS = frozenset(
++    {_TAG_TEXT, _TAG_NAME, _TAG_KEYWORD, _TAG_URI, _TAG_CHARSET, _TAG_NATURAL_LANGUAGE, _TAG_MIME_MEDIA_TYPE},
++)
++
++#: Status codes below this are "successful-ok" in some form (RFC 8011 section 13.1).
++_STATUS_OK_MAX = 0x0100
++
++
++class IppError(Exception):
++    """The printer could not be reached, or refused the request."""
++
++
++@dataclass(frozen=True)
++class PrinterQueue:
++    """One queue advertised by a CUPS server."""
++
++    name: str
++    uri: str
++    info: str | None
++    location: str | None
++    make_and_model: str | None
++    state: int | None
++
++
++@dataclass(frozen=True)
++class JobState:
++    """The state of a submitted job, as the printer reports it."""
++
++    #: IPP job-state (RFC 8011 section 5.3.7): 3 pending .. 9 completed.
++    state: int
++    reasons: str | None
++
++    @property
++    def is_terminal(self) -> bool:
++        """True once the printer will not change this job's state again."""
++        return self.state >= 7  # noqa: PLR2004 - 7/8/9 = canceled/aborted/completed
++
++
++def _encode_attribute(tag: int, name: str, value: bytes) -> bytes:
++    name_bytes = name.encode()
++    return struct.pack(">BH", tag, len(name_bytes)) + name_bytes + struct.pack(">H", len(value)) + value
++
++
++def _encode_text(tag: int, name: str, value: str) -> bytes:
++    return _encode_attribute(tag, name, value.encode())
++
++
++def _encode_integer(name: str, value: int) -> bytes:
++    return _encode_attribute(_TAG_INTEGER, name, struct.pack(">i", value))
++
++
++def _build_request(
++    operation: Operation,
++    printer_uri: str,
++    *,
++    request_id: int = 1,
++    user: str = "spoolman",
++    operation_attributes: bytes = b"",
++    job_attributes: bytes = b"",
++    document: bytes | None = None,
++) -> bytes:
++    """Assemble a complete IPP request body.
++
++    ``attributes-charset`` and ``attributes-natural-language`` must come first
++    and in that order (RFC 8011 section 4.1.4); everything else follows.
++    """
++    body = struct.pack(">BBHI", _VERSION[0], _VERSION[1], operation, request_id)
++    body += bytes([_TAG_OPERATION_ATTRIBUTES])
++    body += _encode_text(_TAG_CHARSET, "attributes-charset", "utf-8")
++    body += _encode_text(_TAG_NATURAL_LANGUAGE, "attributes-natural-language", "en")
++    body += _encode_text(_TAG_URI, "printer-uri", printer_uri)
++    body += _encode_text(_TAG_NAME, "requesting-user-name", user)
++    body += operation_attributes
++    if job_attributes:
++        body += bytes([_TAG_JOB_ATTRIBUTES]) + job_attributes
++    body += bytes([_TAG_END_OF_ATTRIBUTES])
++    if document is not None:
++        body += document
++    return body
++
++
++def _decode_value(tag: int, raw: bytes) -> Any:  # noqa: ANN401 - IPP values are genuinely heterogeneous
++    """Decode one attribute value, or return None for types we do not need.
++
++    A printer is free to send types this client never asks about; skipping
++    those keeps it from breaking on a perfectly legal response.
++    """
++    integer_length = 4
++    if tag in _INTEGER_TAGS and len(raw) == integer_length:
++        return struct.unpack(">i", raw)[0]
++    if tag == _TAG_BOOLEAN and len(raw) == 1:
++        return raw[0] == 1
++    if tag in _STRING_TAGS:
++        return raw.decode(errors="replace")
++    return None
++
++
++def _store_value(group: dict[str, Any], key: str, value: Any) -> None:  # noqa: ANN401 - see _decode_value
++    """Add a value, turning the entry into a list once it repeats."""
++    if key not in group:
++        group[key] = value
++        return
++    existing = group[key]
++    if isinstance(existing, list):
++        existing.append(value)
++    else:
++        group[key] = [existing, value]
++
++
++def _read_attribute(payload: bytes, offset: int) -> tuple[str, bytes, int] | None:
++    """Read one name/value pair, returning it with the new offset."""
++    length_size = 2
++    if offset + length_size > len(payload):
++        return None
++    (name_length,) = struct.unpack(">H", payload[offset : offset + length_size])
++    offset += length_size
++    name = payload[offset : offset + name_length].decode(errors="replace")
++    offset += name_length
++    if offset + length_size > len(payload):
++        return None
++    (value_length,) = struct.unpack(">H", payload[offset : offset + length_size])
++    offset += length_size
++    raw = payload[offset : offset + value_length]
++    return name, raw, offset + value_length
++
++
++def _parse_response(payload: bytes) -> tuple[int, list[dict[str, Any]]]:
++    """Return the status code and one dict per attribute group."""
++    header_length = 8
++    if len(payload) < header_length:
++        raise IppError("The printer sent a truncated response.")
++    status = struct.unpack(">H", payload[2:4])[0]
++
++    groups: list[dict[str, Any]] = []
++    current: dict[str, Any] | None = None
++    # Multi-value attributes repeat with an empty name; they belong to the
++    # attribute that last carried one.
++    last_name: str | None = None
++    offset = header_length
++
++    while offset < len(payload):
++        tag = payload[offset]
++        offset += 1
++        if tag == _TAG_END_OF_ATTRIBUTES:
++            break
++        if tag in _DELIMITER_TAGS:
++            current = {}
++            groups.append(current)
++            last_name = None
++            continue
++
++        attribute = _read_attribute(payload, offset)
++        if attribute is None:
++            break
++        name, raw, offset = attribute
++
++        key = name or last_name
++        if name:
++            last_name = name
++        if current is None or key is None:
++            continue
++        value = _decode_value(tag, raw)
++        if value is not None:
++            _store_value(current, key, value)
++
++    return status, groups
++
++
++def build_printer_uri(host: str, port: int, queue: str, *, tls: bool = False) -> str:
++    """Build the printer URI for a queue on a CUPS-style server."""
++    scheme = "ipps" if tls else "ipp"
++    return f"{scheme}://{host}:{port}/printers/{queue}"
++
++
++class IppClient:
++    """Issues IPP operations against one printer or CUPS server."""
++
++    def __init__(self, *, timeout: float = 10.0) -> None:
++        """Create a client that gives up on any single operation after ``timeout`` seconds."""
++        self._timeout = timeout
++
++    async def _post(self, url: str, body: bytes) -> tuple[int, list[dict[str, Any]]]:
++        # IPP travels over plain HTTP even when the URI scheme says ipp/ipps.
++        http_url = url.replace("ipps://", "https://", 1).replace("ipp://", "http://", 1)
++        try:
++            async with httpx.AsyncClient(timeout=self._timeout) as client:
++                response = await client.post(
++                    http_url,
++                    content=body,
++                    headers={"Content-Type": "application/ipp"},
++                )
++        except httpx.HTTPError as exc:
++            raise IppError(f"Could not reach the printer: {exc}") from exc
++
++        if response.status_code != httpx.codes.OK:
++            raise IppError(f"The printer replied with HTTP {response.status_code}.")
++
++        status, groups = _parse_response(response.content)
++        if status >= _STATUS_OK_MAX:
++            message = _first_attribute(groups, "status-message")
++            detail = f": {message}" if message else ""
++            raise IppError(f"The printer rejected the request (IPP status 0x{status:04x}{detail}).")
++        return status, groups
++
++    async def print_document(
++        self,
++        printer_uri: str,
++        document: bytes,
++        *,
++        document_format: str,
++        job_name: str,
++        copies: int = 1,
++    ) -> int | None:
++        """Submit a document and return the printer-assigned job id.
++
++        The job id is returned as ``None`` when the printer accepted the job
++        but did not report one, which some minimal implementations do. That is
++        not an error — the document was still accepted.
++        """
++        operation_attributes = _encode_text(_TAG_NAME, "job-name", job_name)
++        operation_attributes += _encode_text(_TAG_MIME_MEDIA_TYPE, "document-format", document_format)
++
++        job_attributes = _encode_integer("copies", copies) if copies > 1 else b""
++
++        body = _build_request(
++            Operation.PRINT_JOB,
++            printer_uri,
++            operation_attributes=operation_attributes,
++            job_attributes=job_attributes,
++            document=document,
++        )
++        _, groups = await self._post(printer_uri, body)
++        job_id = _first_attribute(groups, "job-id")
++        return job_id if isinstance(job_id, int) else None
++
++    async def printer_state(self, printer_uri: str) -> int | None:
++        """Return the printer's IPP printer-state, or None if it did not say."""
++        body = _build_request(Operation.GET_PRINTER_ATTRIBUTES, printer_uri)
++        _, groups = await self._post(printer_uri, body)
++        state = _first_attribute(groups, "printer-state")
++        return state if isinstance(state, int) else None
++
++    async def job_state(self, printer_uri: str, job_id: int) -> JobState:
++        """Look up the current state of a previously submitted job."""
++        body = _build_request(
++            Operation.GET_JOB_ATTRIBUTES,
++            printer_uri,
++            operation_attributes=_encode_integer("job-id", job_id),
++        )
++        _, groups = await self._post(printer_uri, body)
++        state = _first_attribute(groups, "job-state")
++        reasons = _first_attribute(groups, "job-state-reasons")
++        if not isinstance(state, int):
++            raise IppError("The printer did not report a job state.")
++        if isinstance(reasons, list):
++            reasons = ", ".join(str(reason) for reason in reasons)
++        return JobState(state=state, reasons=reasons if isinstance(reasons, str) else None)
++
++    async def list_queues(self, host: str, port: int, *, tls: bool = False) -> list[PrinterQueue]:
++        """List the queues a CUPS server offers.
++
++        Uses the CUPS-Get-Printers vendor operation. A server that does not
++        implement it (a standalone network printer, say) answers with an IPP
++        error, which surfaces as an empty list rather than a failure: "this is
++        not a CUPS server" is a legitimate answer to the question.
++        """
++        server_uri = build_printer_uri(host, port, "", tls=tls).rstrip("/")
++        body = _build_request(Operation.CUPS_GET_PRINTERS, server_uri)
++        try:
++            _, groups = await self._post(server_uri, body)
++        except IppError:
++            logger.debug("Server at %s:%s does not support CUPS-Get-Printers.", host, port)
++            return []
++
++        queues: list[PrinterQueue] = []
++        for group in groups:
++            name = group.get("printer-name")
++            if not isinstance(name, str) or not name:
++                continue
++            uri = group.get("printer-uri-supported")
++            if isinstance(uri, list):
++                uri = uri[0]
++            queues.append(
++                PrinterQueue(
++                    name=name,
++                    uri=uri if isinstance(uri, str) else build_printer_uri(host, port, name, tls=tls),
++                    info=_as_str(group.get("printer-info")),
++                    location=_as_str(group.get("printer-location")),
++                    make_and_model=_as_str(group.get("printer-make-and-model")),
++                    state=group.get("printer-state") if isinstance(group.get("printer-state"), int) else None,
++                ),
++            )
++        return queues
++
++
++def _as_str(value: Any) -> str | None:  # noqa: ANN401 - values come from parsed IPP attributes
++    if isinstance(value, list):
++        value = value[0] if value else None
++    return value if isinstance(value, str) and value else None
++
++
++def _first_attribute(groups: list[dict[str, Any]], name: str) -> Any:  # noqa: ANN401 - see above
++    for group in groups:
++        if name in group:
++            value = group[name]
++            return value[0] if isinstance(value, list) and value else value
++    return None
+diff --git a/tests/test_ipp.py b/tests/test_ipp.py
+new file mode 100644
+index 0000000..0f1e8c2
+--- /dev/null
++++ b/tests/test_ipp.py
+@@ -0,0 +1,147 @@
++"""Tests for the IPP wire format.
++
++These verify the bytes on the wire, because that is the only thing a printer
++sees. The encoder and decoder are exercised against each other and against
++hand-built payloads that mirror what a real CUPS server sends back.
++"""
++
++import struct
++
++import pytest
++
++from spoolman.printing.ipp import (
++    IppError,
++    JobState,
++    Operation,
++    _build_request,
++    _parse_response,
++    build_printer_uri,
++)
++
++
++def _attribute(tag: int, name: str, value: bytes) -> bytes:
++    name_bytes = name.encode()
++    return struct.pack(">BH", tag, len(name_bytes)) + name_bytes + struct.pack(">H", len(value)) + value
++
++
++def _response(status: int, groups: bytes) -> bytes:
++    return struct.pack(">BBHI", 1, 1, status, 1) + groups + bytes([0x03])
++
++
++def test_request_starts_with_the_mandatory_charset_attributes():
++    """RFC 8011 4.1.4 requires these two first, in this order."""
++    body = _build_request(Operation.PRINT_JOB, "ipp://printer:631/printers/q")
++
++    version_major, version_minor, operation, request_id = struct.unpack(">BBHI", body[:8])
++    assert (version_major, version_minor) == (1, 1)
++    assert operation == Operation.PRINT_JOB
++    assert request_id == 1
++    assert body[8] == 0x01  # operation-attributes-tag
++    charset_index = body.index(b"attributes-charset")
++    language_index = body.index(b"attributes-natural-language")
++    assert charset_index < language_index
++
++
++def test_request_carries_the_printer_uri_and_document_bytes():
++    body = _build_request(
++        Operation.PRINT_JOB,
++        "ipp://printer:631/printers/labels",
++        operation_attributes=b"",
++        document=b"\x89PNG\r\n\x1a\n-payload",
++    )
++
++    assert b"ipp://printer:631/printers/labels" in body
++    # The document is appended verbatim after the end-of-attributes tag.
++    assert body.endswith(b"\x89PNG\r\n\x1a\n-payload")
++    assert body[-len(b"\x89PNG\r\n\x1a\n-payload") - 1] == 0x03
++
++
++def test_encoder_and_decoder_agree():
++    """A request parsed back must yield the attributes that went in."""
++    body = _build_request(Operation.GET_PRINTER_ATTRIBUTES, "ipp://host:631/printers/q", user="tester")
++
++    _, groups = _parse_response(body)
++
++    assert groups[0]["attributes-charset"] == "utf-8"
++    assert groups[0]["printer-uri"] == "ipp://host:631/printers/q"
++    assert groups[0]["requesting-user-name"] == "tester"
++
++
++def test_copies_are_sent_as_a_job_attribute():
++    body = _build_request(
++        Operation.PRINT_JOB,
++        "ipp://host:631/printers/q",
++        job_attributes=_attribute(0x21, "copies", struct.pack(">i", 4)),
++    )
++
++    _, groups = _parse_response(body)
++
++    # The job attributes land in their own group, after the operation ones.
++    assert groups[1]["copies"] == 4
++
++
++def test_parse_reads_integers_strings_and_booleans():
++    payload = _response(
++        0x0000,
++        bytes([0x04])
++        + _attribute(0x21, "printer-state", struct.pack(">i", 3))
++        + _attribute(0x42, "printer-name", b"labels")
++        + _attribute(0x22, "printer-is-accepting-jobs", bytes([1])),
++    )
++
++    status, groups = _parse_response(payload)
++
++    assert status == 0
++    assert groups[0]["printer-state"] == 3
++    assert groups[0]["printer-name"] == "labels"
++    assert groups[0]["printer-is-accepting-jobs"] is True
++
++
++def test_repeated_attributes_collapse_into_a_list():
++    """IPP repeats a multi-value attribute with an empty name."""
++    payload = _response(
++        0x0000,
++        bytes([0x04])
++        + _attribute(0x44, "job-state-reasons", b"job-incoming")
++        + _attribute(0x44, "", b"job-data-insufficient"),
++    )
++
++    _, groups = _parse_response(payload)
++
++    assert groups[0]["job-state-reasons"] == ["job-incoming", "job-data-insufficient"]
++
++
++def test_unknown_value_types_are_skipped_not_fatal():
++    """A printer may send types we never ask about; that must not break parsing."""
++    payload = _response(
++        0x0000,
++        bytes([0x04])
++        + _attribute(0x30, "some-octet-string", b"\x01\x02\x03")
++        + _attribute(0x42, "printer-name", b"labels"),
++    )
++
++    _, groups = _parse_response(payload)
++
++    assert "some-octet-string" not in groups[0]
++    assert groups[0]["printer-name"] == "labels"
++
++
++def test_truncated_response_is_reported_clearly():
++    with pytest.raises(IppError):
++        _parse_response(b"\x01\x01")
++
++
++@pytest.mark.parametrize(
++    ("tls", "expected"),
++    [(False, "ipp://host:631/printers/q"), (True, "ipps://host:631/printers/q")],
++)
++def test_printer_uri_reflects_tls(tls: bool, expected: str):  # noqa: FBT001 - pytest.parametrize
++    assert build_printer_uri("host", 631, "q", tls=tls) == expected
++
++
++@pytest.mark.parametrize(
++    ("state", "terminal"),
++    [(3, False), (5, False), (7, True), (8, True), (9, True)],
++)
++def test_job_is_terminal_only_once_the_printer_is_done_with_it(state: int, terminal: bool):  # noqa: FBT001
++    assert JobState(state=state, reasons=None).is_terminal is terminal
