@@ -90,7 +90,7 @@ RUN npm run build \
 # Diese Stufe enthaelt exakt die Pakete, die im Endergebnis landen sollen.
 # backend-deps und runtime bauen beide darauf auf, damit /opt/venv im
 # Endergebnis auf denselben /usr/bin/python3 zeigt, mit dem es erzeugt wurde.
-FROM debian:trixie-20260713-slim AS runtime-base
+FROM debian:trixie-20260803-slim AS runtime-base
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
