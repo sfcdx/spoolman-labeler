@@ -35,7 +35,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Buildx einrichten
-        uses: docker/setup-buildx-action@v4.2.0
+        uses: docker/setup-buildx-action@v4.3.0
 
       - name: .env aus der Vorlage anlegen
         run: cp .env.example .env
